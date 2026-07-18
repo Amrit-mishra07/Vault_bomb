@@ -8,12 +8,10 @@ const path = require("path");
 
 const app = express();
 app.use(cors());
-// Increase limit for demo evidence payloads
 app.use(express.json({ limit: "50mb" }));
 
-// In a real TEE (e.g. EigenCloud or AWS Nitro), this state is protected by hardware isolation.
-// For the hackathon demo, we hold it in memory.
-const keyStore = new Map(); // Map<journalistAddress, {aesKey, evidenceHash, ciphertext}>
+// Mocking Lit Protocol's decentralized MPC state
+const litKeyStore = new Map(); // Map<journalistAddress, {aesKey, evidenceHash, ciphertext}>
 
 app.post("/store-key", (req, res) => {
     const { journalistAddress, aesKey, evidenceHash, ciphertext } = req.body;
@@ -21,32 +19,29 @@ app.post("/store-key", (req, res) => {
         return res.status(400).json({ error: "Missing parameters" });
     }
     
-    console.log(`\n[TEE] Securing key and evidence for journalist: ${journalistAddress}`);
-    console.log(`[TEE] Expected Evidence Hash (SHA-256): ${evidenceHash}`);
+    console.log(`\n[LIT PROTOCOL] Securing key and evidence for journalist: ${journalistAddress}`);
+    console.log(`[LIT PROTOCOL] Access Control Condition (ACC): "triggerRelease() must be called on-chain"`);
     
-    keyStore.set(journalistAddress.toLowerCase(), {
-        aesKey, // Base64 string
+    litKeyStore.set(journalistAddress.toLowerCase(), {
+        aesKey,
         evidenceHash,
-        ciphertext // Base64 string (IV + Ciphertext + AuthTag)
+        ciphertext
     });
 
-    // In a real implementation, the TEE returns a cryptographic attestation/signature
-    // over (evidenceHash || journalistAddress) signed by the enclave's private key.
-    // For this mock demo, we return a dummy signature that the contract accepts.
     res.json({
         success: true,
-        teeSignature: "0xdeadbeef" 
+        litSignature: "0xdeadbeef_lit_setup_proof" 
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Mock TEE Enclave started on port ${PORT}`);
-    console.log(`Waiting for connections and blockchain triggers...`);
+    console.log(`Mock Lit Protocol Node started on port ${PORT}`);
+    console.log(`Waiting for blockchain ACC unlocks...`);
 });
 
 // ---------------------------------------------------------
-// Listen for Blockchain Trigger Events
+// Listen for Blockchain Trigger Events (ACC Unlock)
 // ---------------------------------------------------------
 const RPC_URL = process.env.RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc";
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
@@ -55,37 +50,33 @@ if (CONTRACT_ADDRESS) {
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     // ABI matching the Stylus contract event
     const abi = [
-        "event Triggered(address indexed journalist, string arweaveTxId, address teeEndpoint)"
+        "event Triggered(address indexed journalist, address indexed triggerer, string arweaveTxId)"
     ];
     const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
     
-    console.log(`Listening for TRIGGERED events on ${CONTRACT_ADDRESS}...`);
+    console.log(`Listening for ACC unlock on ${CONTRACT_ADDRESS}...`);
     
-    contract.on("Triggered", async (journalist, arweaveTxId, teeEndpoint) => {
+    contract.on("Triggered", async (journalist, triggerer, arweaveTxId) => {
         console.log(`\n======================================================`);
-        console.log(`🚨 TRIGGERED EVENT RECEIVED FOR ${journalist} 🚨`);
+        console.log(`🚨 LIT ACTION UNLOCKED FOR ${journalist} 🚨`);
+        console.log(`Triggered by Bounty Hunter: ${triggerer}`);
         console.log(`======================================================`);
         
-        const keyData = keyStore.get(journalist.toLowerCase());
+        const keyData = litKeyStore.get(journalist.toLowerCase());
         if (!keyData) {
-            console.error(`[X] Error: Key not found in TEE for ${journalist}`);
+            console.error(`[X] Error: Key not found in Lit nodes for ${journalist}`);
             return;
         }
 
-        console.log(`[*] Fetching encrypted evidence... (Simulating Arweave TX: ${arweaveTxId})`);
-        
         try {
-            // Decrypt the payload
-            console.log(`[*] Decrypting evidence with securely held AES key...`);
+            console.log(`[*] MPC nodes combining shares to reconstruct AES key...`);
+            console.log(`[*] Fetching encrypted evidence... (Arweave TX: ${arweaveTxId})`);
             
             const rawKey = Buffer.from(keyData.aesKey, 'base64');
             const encryptedData = Buffer.from(keyData.ciphertext, 'base64');
             
-            // Extract IV (first 12 bytes)
             const iv = encryptedData.subarray(0, 12);
-            // Extract Auth Tag (last 16 bytes)
             const authTag = encryptedData.subarray(encryptedData.length - 16);
-            // Extract Ciphertext
             const ciphertext = encryptedData.subarray(12, encryptedData.length - 16);
             
             const decipher = crypto.createDecipheriv('aes-256-gcm', rawKey, iv);
@@ -96,30 +87,35 @@ if (CONTRACT_ADDRESS) {
                 decipher.final()
             ]);
             
-            // Verify Hash
             const computedHash = "0x" + crypto.createHash("sha256").update(plaintext).digest("hex");
             if (computedHash !== keyData.evidenceHash) {
-                throw new Error(`Hash mismatch! Expected ${keyData.evidenceHash}, got ${computedHash}`);
+                throw new Error(`Hash mismatch!`);
             }
             
-            console.log(`[✔] Evidence successfully decrypted!`);
-            console.log(`[✔] Integrity hash matched perfectly.`);
+            console.log(`[✔] Evidence successfully decrypted by Lit Action!`);
             
-            console.log(`\n[*] Publishing plaintext to pre-configured journalistic endpoints...`);
+            // MULTI-CHANNEL PUBLISHING
+            console.log(`\n[*] Executing Multi-Channel Publishing from inside Lit Action...`);
             
-            // Save to disk to prove it worked
             const outPath = path.join(__dirname, `released_evidence_${Date.now()}.txt`);
             fs.writeFileSync(outPath, plaintext);
+            console.log(`  ➔ [Arweave] Uploaded successfully (Mocked via local disk: ${outPath})`);
+            console.log(`  ➔ [Farcaster] Cast published: "AUTOMATED RELEASE: Evidence attached..." (Mocked)`);
+            console.log(`  ➔ [Email] Dispatched to press freedom org list (Mocked)`);
             
             console.log(`\n[SUCCESS] Unstoppable Release Complete!`);
-            console.log(`[SUCCESS] Evidence written to: ${outPath}`);
+            
+            // Generate the bounty claim proof
+            const publicationProof = "0x" + crypto.createHash("sha256").update("PUBLISHED" + journalist).digest("hex");
+            console.log(`\n💰 BOUNTY PROOF FOR TRIGGERER 💰`);
+            console.log(`Triggerer ${triggerer} can now call claim_bounty() with this Lit Proof:`);
+            console.log(`${publicationProof}`);
             console.log(`======================================================\n`);
             
         } catch (e) {
-            console.error(`[X] Decryption failed:`, e.message);
+            console.error(`[X] Lit Action failed:`, e.message);
         }
     });
 } else {
-    console.warn("No CONTRACT_ADDRESS provided in .env, skipping on-chain event listener.");
-    console.warn("To test decryption manually, you will need to trigger the contract and pass the address.");
+    console.warn("No CONTRACT_ADDRESS provided in .env.");
 }
