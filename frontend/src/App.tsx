@@ -290,7 +290,7 @@ function App() {
                       {isProcessing ? (<span><span className="loader"></span>Processing...</span>) : "Encrypt & Arm Switch"}
                     </button>
                     <div className="help-text">
-                      Local encryption -> Lit Protocol Access Control setup -> Smart Contract Registration + Bounty Deposit.
+                      Local encryption -&gt; Lit Protocol Access Control setup -&gt; Smart Contract Registration + Bounty Deposit.
                     </div>
                   </div>
                 )}
