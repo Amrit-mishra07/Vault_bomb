@@ -27,6 +27,49 @@ Any centralized platform can be pressured, subpoenaed, hacked, or quietly bribed
 
 Vault_bomb solves the problem of keeping private data (the decryption key) off-chain while using on-chain execution guarantees to gate its release. 
 
+```mermaid
+sequenceDiagram
+    participant J as Journalist
+    participant A as Arweave
+    participant T as TEE Enclave (AWS Nitro)
+    participant S as Arbitrum Stylus Contract
+    participant C as Chainlink Upkeep
+    
+    %% Setup Phase
+    rect rgb(30, 30, 30)
+    note right of J: 1. Setup Phase
+    J->>J: Encrypt evidence (AES Key)
+    J->>A: Upload ciphertext
+    A-->>J: Return permanent TxID
+    J->>T: Send AES Key + TxID (TLS)
+    T-->>J: Return cryptographic attestation
+    J->>S: registerSwitch(TxID, TEE_Endpoint, Hash)
+    end
+    
+    %% Normal Operation
+    rect rgb(20, 40, 20)
+    note right of J: 2. Normal Operation
+    loop Every N Blocks
+        J->>S: heartbeat()
+        S-->>S: Reset timer (last_heartbeat = block.number)
+        C->>S: checkUpkeep() -> false
+    end
+    end
+    
+    %% Trigger Phase
+    rect rgb(50, 20, 20)
+    note right of J: 3. Trigger Phase (Detention/Silence)
+    C->>S: checkUpkeep() -> true (window expired)
+    C->>S: performUpkeep()
+    S->>S: Set state to TRIGGERED
+    S-->>T: Emit TRIGGERED Event
+    T->>A: Fetch ciphertext using TxID
+    A-->>T: Return ciphertext
+    T->>T: Decrypt using AES Key in memory
+    T->>A: Publish Plaintext Evidence
+    end
+```
+
 1. **Arbitrum Stylus Contract (Rust):** The anchor of verifiability. Holds trigger logic and heartbeat state. Written in Rust for heavily optimized WASM execution.
 2. **Chainlink Upkeep:** Decentralized automation that fires the trigger permissionlessly when the heartbeat window expires.
 3. **TEE on EigenCloud / AWS Nitro:** Secure enclave for private key custody. Decrypts and publishes evidence only upon seeing the on-chain `TRIGGERED` event.
