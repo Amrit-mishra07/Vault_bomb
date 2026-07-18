@@ -30,9 +30,12 @@ sol_storage! {
         bool bounty_claimed;
         address registered_wallet;
         address duress_wallet;
+        address backup_wallet;
         address triggerer_wallet;
         uint256 heartbeat_window_blocks;
+        uint256 grace_period_blocks;
         uint256 last_heartbeat_block;
+        uint256 last_nonce;
         uint256 bounty_amount;
         string arweave_tx_id;
         bytes32 evidence_hash;
@@ -45,9 +48,11 @@ impl VaultBomb {
     pub fn register_switch(
         &mut self,
         heartbeat_window_blocks: U256,
+        grace_period_blocks: U256,
         arweave_tx_id: String,
         evidence_hash: B256,
-        duress_wallet: Address
+        duress_wallet: Address,
+        backup_wallet: Address
     ) -> Result<(), Vec<u8>> {
         let caller = msg::sender();
         let value = msg::value();
@@ -63,8 +68,11 @@ impl VaultBomb {
         sw.bounty_claimed.set(false);
         sw.registered_wallet.set(caller);
         sw.duress_wallet.set(duress_wallet);
+        sw.backup_wallet.set(backup_wallet);
         sw.heartbeat_window_blocks.set(heartbeat_window_blocks);
+        sw.grace_period_blocks.set(grace_period_blocks);
         sw.last_heartbeat_block.set(U256::from(block::number()));
+        sw.last_nonce.set(U256::ZERO);
         sw.bounty_amount.set(value);
         sw.arweave_tx_id.set_str(arweave_tx_id.clone());
         sw.evidence_hash.set(evidence_hash);
@@ -81,9 +89,9 @@ impl VaultBomb {
         Ok(())
     }
 
-    pub fn heartbeat(&mut self) -> Result<(), Vec<u8>> {
+    pub fn heartbeat(&mut self, journalist: Address, nonce: U256) -> Result<(), Vec<u8>> {
         let caller = msg::sender();
-        let mut sw = self.switches.setter(caller);
+        let mut sw = self.switches.setter(journalist);
 
         if !sw.is_active.get() {
             return Err("Switch not active".as_bytes().to_vec());
@@ -91,11 +99,14 @@ impl VaultBomb {
         if sw.is_triggered.get() {
             return Err("Already triggered".as_bytes().to_vec());
         }
+        
+        if nonce <= sw.last_nonce.get() {
+            return Err("Invalid nonce: Must be strictly increasing".as_bytes().to_vec());
+        }
 
         // Duress wallet automatically triggers the release
         if caller == sw.duress_wallet.get() {
             sw.is_triggered.set(true);
-            let journalist = sw.registered_wallet.get();
             sw.triggerer_wallet.set(caller); // Duress wallet acts as triggerer
 
             evm::log(Triggered {
@@ -106,14 +117,18 @@ impl VaultBomb {
             return Ok(());
         }
 
-        if caller != sw.registered_wallet.get() {
+        let reg_wallet = sw.registered_wallet.get();
+        let backup = sw.backup_wallet.get();
+        
+        if caller != reg_wallet && caller != backup {
             return Err("Unauthorized".as_bytes().to_vec());
         }
 
+        sw.last_nonce.set(nonce);
         sw.last_heartbeat_block.set(U256::from(block::number()));
         
         evm::log(HeartbeatReceived {
-            journalist: caller,
+            journalist,
             blockNumber: U256::from(block::number()),
         });
 
@@ -135,8 +150,9 @@ impl VaultBomb {
         let current_block = U256::from(block::number());
         let last_heartbeat = sw.last_heartbeat_block.get();
         let window = sw.heartbeat_window_blocks.get();
+        let grace = sw.grace_period_blocks.get();
 
-        if current_block > last_heartbeat + window {
+        if current_block > last_heartbeat + window + grace {
             sw.is_triggered.set(true);
             
             // Record who triggered it so they can claim the bounty later
@@ -195,6 +211,54 @@ impl VaultBomb {
         });
 
         Ok(())
+    }
+
+    /// Chainlink Automation compatible function to check if any switch needs triggering
+    pub fn check_upkeep(&self, _check_data: Bytes) -> Result<(bool, Bytes), Vec<u8>> {
+        let current_block = U256::from(block::number());
+        let mut upkeep_needed = false;
+        let mut target_journalist = Address::ZERO;
+        
+        let count = self.registered_journalists.len();
+        for i in 0..count {
+            if let Some(j) = self.registered_journalists.getter(i) {
+                let sw = self.switches.getter(j);
+                if sw.is_active.get() && !sw.is_triggered.get() {
+                    let last = sw.last_heartbeat_block.get();
+                    let win = sw.heartbeat_window_blocks.get();
+                    let grace = sw.grace_period_blocks.get();
+                    if current_block > last + win + grace {
+                        upkeep_needed = true;
+                        target_journalist = j;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        let perform_data = if upkeep_needed {
+            let mut data = Vec::with_capacity(32);
+            let bytes: [u8; 20] = target_journalist.into();
+            data.extend_from_slice(&[0u8; 12]);
+            data.extend_from_slice(&bytes);
+            Bytes::from(data)
+        } else {
+            Bytes::new()
+        };
+
+        Ok((upkeep_needed, perform_data))
+    }
+
+    /// Chainlink Automation compatible function to execute the trigger
+    pub fn perform_upkeep(&mut self, perform_data: Bytes) -> Result<(), Vec<u8>> {
+        if perform_data.len() < 32 {
+            return Err("Invalid perform_data length".as_bytes().to_vec());
+        }
+        let mut addr_bytes = [0u8; 20];
+        addr_bytes.copy_from_slice(&perform_data[12..32]);
+        let journalist = Address::from(addr_bytes);
+
+        self.trigger_release(journalist)
     }
 
     // --- View Functions for the Watcher Dashboard ---

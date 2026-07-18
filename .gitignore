@@ -19,6 +19,3 @@ contracts/target/
 
 # TEE / Lit simulator outputs
 lit-simulator/released_evidence_*.txt
-
-# Temp screenshots
-*.png
