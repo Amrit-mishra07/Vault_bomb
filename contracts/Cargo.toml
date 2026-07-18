@@ -1,0 +1,21 @@
+[package]
+name = "vault-bomb-contract"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-primitives = { version = "0.7.6", default-features = false }
+alloy-sol-types = { version = "0.7.6", default-features = false }
+stylus-sdk = "0.6.0"
+
+[features]
+export-abi = ["stylus-sdk/export-abi"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[profile.release]
+codegen-units = 1
+panic = "abort"
+opt-level = "z"
+lto = true
