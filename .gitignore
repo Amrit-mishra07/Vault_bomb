@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+frontend/dist/
+
+# Environment variables
+.env
+
+# Rust / Cargo
+contracts/target/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# TEE / Lit simulator outputs
+lit-simulator/released_evidence_*.txt
+
+# Temp screenshots
+*.png
