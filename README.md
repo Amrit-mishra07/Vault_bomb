@@ -14,7 +14,7 @@
 
 ## 📖 Overview
 
-A journalist or RTI activist pre-commits encrypted evidence to a smart contract. If they fail to send a **heartbeat transaction** within a set window — because they've been detained, disappeared, or had their device seized — the system automatically releases the evidence. 
+A journalist or RTI activist pre-commits encrypted evidence to a smart contract. A single registered wallet can arm any number of independently identified switches. If a switch misses its **heartbeat transaction** within its set window — because its owner has been detained, disappeared, or had their device seized — the system automatically releases that switch's evidence.
 
 **No human or organization, including the platform itself, can stop the release once conditions are met.**
 
@@ -82,15 +82,15 @@ sequenceDiagram
 ### 1. Setup
 1. **Encrypt & Upload:** The journalist encrypts evidence locally via AES and uploads the ciphertext to Arweave to get a permanent `txID`.
 2. **Key Custody:** The AES key is encrypted using Lit Protocol, locking it behind an Access Control Condition (ACC): *“Only decrypt if `is_triggered` == true on the Stylus contract.”*
-3. **Registration:** The journalist calls `registerSwitch()` on the Stylus contract, storing the `txID`, setting the heartbeat window, and depositing an ETH bounty.
+3. **Registration:** The journalist creates a cryptographically random `switchId`, secures the key under that ID, then calls `register_switch(switchId, ...)` on the Stylus contract. The same wallet may repeat this for additional independent switches.
 
 ### 2. Normal Operation
-- The journalist sends a `heartbeat()` transaction every $N$ blocks.
+- The journalist sends a `heartbeat(switchId, nonce)` transaction every $N$ blocks for each switch they want to keep armed.
 - The **Watcher Dashboard** passively reads contract state, showing the switch as "Armed."
 
 ### 3. Trigger Event (Detention / Disappearance)
 - Heartbeat window expires.
-- Any wallet (e.g., a searcher bot) calls the public `triggerRelease()` function.
+- Any wallet (e.g., a searcher bot) calls the public `trigger_release(switchId)` function.
 - The Stylus contract switches state to `TRIGGERED`.
 - The bot triggers the **Lit Action**. Since the ACC is now satisfied, the Lit nodes combine their MPC shares to decrypt the key.
 - The Lit Action fetches the ciphertext, decrypts it, and **multi-publishes** the plaintext to Arweave, Farcaster, and an email list.
