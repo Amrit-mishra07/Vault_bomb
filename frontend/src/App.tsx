@@ -4,8 +4,8 @@ import { ethers } from 'ethers'
 // Dummy contract address and ABI for demo
 const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000"; // Replace with deployed
 const ABI = [
-  "function register_switch(uint256 heartbeat_window_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet) external payable",
-  "function heartbeat() external",
+  "function register_switch(uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable",
+  "function heartbeat(address journalist, uint256 nonce) external",
   "function trigger_release(address journalist) external",
   "function claim_bounty(address journalist, bytes lit_proof) external",
   "function get_registered_journalists_count() external view returns (uint256)",
@@ -23,6 +23,7 @@ function App() {
   const [evidenceText, setEvidenceText] = useState<string>('');
   const [bountyEth, setBountyEth] = useState<string>('0.01');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [heartbeatNonce, setHeartbeatNonce] = useState<number>(1);
 
   // Watcher State
   const [switches, setSwitches] = useState<any[]>([]);
@@ -99,11 +100,14 @@ function App() {
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       
       const value = ethers.parseEther(bountyEth);
+      const gracePeriodBlocks = 10; // Small grace period for demo
       const tx = await contract.register_switch(
         windowBlocks,
+        gracePeriodBlocks,
         "arweave_mock_tx_123",
         evidenceHashHex,
-        ethers.ZeroAddress,
+        ethers.ZeroAddress, // duress_wallet
+        ethers.ZeroAddress, // backup_wallet
         { value }
       );
       
@@ -129,8 +133,9 @@ function App() {
     const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     try {
       setIsProcessing(true);
-      const tx = await contract.heartbeat();
+      const tx = await contract.heartbeat(account, heartbeatNonce);
       await tx.wait();
+      setHeartbeatNonce(prev => prev + 1);
       alert("Heartbeat successfully sent! Timer reset.");
       setIsProcessing(false);
     } catch (e: any) {
