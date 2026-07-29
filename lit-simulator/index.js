@@ -112,8 +112,10 @@ if (CONTRACT_ADDRESS) {
             
             console.log(`\n[SUCCESS] Unstoppable Release Complete!`);
             
-            // Generate the bounty claim proof
-            const publicationProof = "0x" + crypto.createHash("sha256").update("PUBLISHED" + switchId).digest("hex");
+            // Generate the bounty claim proof (65 bytes for mock ECDSA signature)
+            const hash = crypto.createHash("sha256").update("PUBLISHED" + switchId).digest("hex");
+            const publicationProof = "0x" + hash + hash + "00"; // 64 bytes of hash + 1 byte recovery id
+
             console.log(`\n💰 BOUNTY PROOF FOR TRIGGERER 💰`);
             console.log(`Triggerer ${triggerer} can now call claim_bounty() with this Lit Proof:`);
             console.log(`${publicationProof}`);

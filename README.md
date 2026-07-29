@@ -42,6 +42,7 @@ sequenceDiagram
     J->>A: Upload ciphertext
     A-->>J: Return permanent TxID
     J->>Lit: Encrypt AES Key with ACC: "Stylus TRIGGERED == true"
+    Lit-->>J: Return success (custody acknowledgment)
     J->>S: registerSwitch(TxID) + Deposit Bounty (ETH)
     end
     

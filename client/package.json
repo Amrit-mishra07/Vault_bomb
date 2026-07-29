@@ -1,0 +1,13 @@
+{
+  "name": "vault-bomb-client",
+  "version": "1.0.0",
+  "description": "Whistleblower Setup Client for Vault_bomb",
+  "main": "setup.js",
+  "scripts": {
+    "start": "node setup.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^6.17.0"
+  }
+}

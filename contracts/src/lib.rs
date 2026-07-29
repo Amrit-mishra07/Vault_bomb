@@ -13,6 +13,7 @@ sol! {
     event SwitchRegistered(bytes32 indexed switchId, address indexed journalist, uint256 heartbeatWindowBlocks, uint256 bountyAmount);
     event HeartbeatReceived(bytes32 indexed switchId, address indexed journalist, uint256 blockNumber);
     event BountyClaimed(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, uint256 amount);
+    event PlaintextPublished(bytes32 indexed switchId, string arweaveTxId);
 }
 
 sol_storage! {
@@ -42,6 +43,14 @@ sol_storage! {
 
 #[public]
 impl VaultBomb {
+    pub fn initialize_lit_pubkey(&mut self, pubkey: Address) -> Result<(), Vec<u8>> {
+        if self.lit_action_pubkey.get() != Address::ZERO {
+            return Err("Already initialized".as_bytes().to_vec());
+        }
+        self.lit_action_pubkey.set(pubkey);
+        Ok(())
+    }
+
     #[payable]
     pub fn register_switch(
         &mut self,
@@ -98,12 +107,8 @@ impl VaultBomb {
         if sw.is_triggered.get() {
             return Err("Already triggered".as_bytes().to_vec());
         }
-        if nonce <= sw.last_nonce.get() {
-            return Err("Invalid nonce: Must be strictly increasing".as_bytes().to_vec());
-        }
-
         let journalist = sw.registered_wallet.get();
-        if caller == sw.duress_wallet.get() {
+        if caller == sw.duress_wallet.get() && caller != Address::ZERO {
             sw.is_triggered.set(true);
             sw.triggerer_wallet.set(caller);
             evm::log(Triggered {
@@ -113,6 +118,10 @@ impl VaultBomb {
                 arweaveTxId: sw.arweave_tx_id.get_string(),
             });
             return Ok(());
+        }
+
+        if nonce <= sw.last_nonce.get() {
+            return Err("Invalid nonce: Must be strictly increasing".as_bytes().to_vec());
         }
 
         if caller != journalist && caller != sw.backup_wallet.get() {
@@ -156,6 +165,18 @@ impl VaultBomb {
         Ok(())
     }
 
+    pub fn confirm_publication(&mut self, switch_id: B256) -> Result<(), Vec<u8>> {
+        let sw = self.switches.getter(switch_id);
+        if !sw.is_triggered.get() {
+            return Err("Not triggered yet".as_bytes().to_vec());
+        }
+        evm::log(PlaintextPublished {
+            switchId: switch_id,
+            arweaveTxId: sw.arweave_tx_id.get_string(),
+        });
+        Ok(())
+    }
+
     pub fn claim_bounty(&mut self, switch_id: B256, lit_proof: Bytes) -> Result<(), Vec<u8>> {
         let mut sw = self.switches.setter(switch_id);
         if !sw.is_triggered.get() {
@@ -168,7 +189,8 @@ impl VaultBomb {
         if caller != sw.triggerer_wallet.get() {
             return Err("Only the triggerer can claim".as_bytes().to_vec());
         }
-        if lit_proof.is_empty() {
+        // Basic length check for a signature (mocking ECDSA verification for the demo)
+        if lit_proof.len() != 65 {
             return Err("Invalid Lit Action proof".as_bytes().to_vec());
         }
 
@@ -222,7 +244,7 @@ impl VaultBomb {
     pub fn get_switch_info(
         &self,
         switch_id: B256,
-    ) -> Result<(Address, bool, bool, U256, U256, U256, bool, U256), Vec<u8>> {
+    ) -> Result<(Address, bool, bool, U256, U256, U256, U256, bool, U256), Vec<u8>> {
         let sw = self.switches.getter(switch_id);
         if !sw.is_active.get() {
             return Err("Switch not active".as_bytes().to_vec());
@@ -232,6 +254,7 @@ impl VaultBomb {
             sw.is_active.get(),
             sw.is_triggered.get(),
             sw.heartbeat_window_blocks.get(),
+            sw.grace_period_blocks.get(),
             sw.last_heartbeat_block.get(),
             sw.bounty_amount.get(),
             sw.bounty_claimed.get(),
