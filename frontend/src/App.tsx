@@ -1,364 +1,247 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ethers } from 'ethers'
 
-// Dummy contract address and ABI for demo
-const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000"; // Replace with deployed
+const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
+const CONTRACT_CONFIGURED = ethers.isAddress(CONTRACT_ADDRESS) && CONTRACT_ADDRESS !== ethers.ZeroAddress;
+const SWITCH_PAGE_SIZE = 25;
 const ABI = [
-  "function register_switch(uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable",
-  "function heartbeat(address journalist, uint256 nonce) external",
-  "function trigger_release(address journalist) external",
-  "function claim_bounty(address journalist, bytes lit_proof) external",
-  "function get_registered_journalists_count() external view returns (uint256)",
-  "function get_registered_journalist(uint256 index) external view returns (address)",
-  "function get_switch_info(address journalist) external view returns (bool is_active, bool is_triggered, uint256 heartbeat_window_blocks, uint256 last_heartbeat_block, uint256 bounty_amount, bool bounty_claimed)"
+  "function register_switch(bytes32 switch_id, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable",
+  "function heartbeat(bytes32 switch_id, uint256 nonce) external",
+  "function trigger_release(bytes32 switch_id) external",
+  "function claim_bounty(bytes32 switch_id, bytes lit_proof) external",
+  "function get_switch_info(bytes32 switch_id) external view returns (address owner, bool is_active, bool is_triggered, uint256 heartbeat_window_blocks, uint256 last_heartbeat_block, uint256 bounty_amount, bool bounty_claimed, uint256 last_nonce)",
+  "event SwitchRegistered(bytes32 indexed switchId, address indexed journalist, uint256 heartbeatWindowBlocks, uint256 bountyAmount)"
 ];
+
+type SwitchInfo = {
+  id: string;
+  owner: string;
+  active: boolean;
+  triggered: boolean;
+  bounty: string;
+  bountyClaimed: boolean;
+  lastNonce: bigint;
+};
+
+const providerForReads = () => new ethers.JsonRpcProvider("https://sepolia-rollup.arbitrum.io/rpc");
 
 function App() {
   const [activeTab, setActiveTab] = useState<'setup' | 'watcher'>('setup');
-  
-  // Setup State
-  const [account, setAccount] = useState<string>('');
-  const [status, setStatus] = useState<string>('Unregistered');
-  const [windowBlocks, setWindowBlocks] = useState<string>('50');
-  const [evidenceText, setEvidenceText] = useState<string>('');
-  const [bountyEth, setBountyEth] = useState<string>('0.01');
+  const [account, setAccount] = useState('');
+  const [status, setStatus] = useState('Ready to arm another switch');
+  const [windowBlocks, setWindowBlocks] = useState('50');
+  const [evidenceText, setEvidenceText] = useState('');
+  const [bountyEth, setBountyEth] = useState('0.01');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [heartbeatNonce, setHeartbeatNonce] = useState<number>(1);
-
-  // Watcher State
-  const [switches, setSwitches] = useState<any[]>([]);
+  const [switches, setSwitches] = useState<SwitchInfo[]>([]);
+  const [ownedSwitches, setOwnedSwitches] = useState<SwitchInfo[]>([]);
+  const [selectedSwitchId, setSelectedSwitchId] = useState('');
+  const [watcherOffset, setWatcherOffset] = useState(0);
+  const [watcherHasMore, setWatcherHasMore] = useState(false);
 
   const connectWallet = async () => {
-    if ((window as any).ethereum) {
-      try {
-        const provider = new ethers.BrowserProvider((window as any).ethereum);
-        const accounts = await provider.send("eth_requestAccounts", []);
-        setAccount(accounts[0]);
-      } catch (err) {
-        console.error("User rejected request", err);
-      }
-    } else {
-      alert("Please install MetaMask!");
+    if (!(window as any).ethereum) return alert("Please install MetaMask!");
+    try {
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
+      setAccount(accounts[0]);
+    } catch (err) {
+      console.error("User rejected request", err);
     }
   };
 
   const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
     let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
+    for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
     return window.btoa(binary);
+  };
+
+  const loadSwitch = async (contract: ethers.Contract, id: string): Promise<SwitchInfo> => {
+    const info = await contract.get_switch_info(id);
+    return {
+      id,
+      owner: info.owner,
+      active: info.is_active,
+      triggered: info.is_triggered,
+      bounty: ethers.formatEther(info.bounty_amount),
+      bountyClaimed: info.bounty_claimed,
+      lastNonce: info.last_nonce,
+    };
+  };
+
+  const refreshOwnedSwitches = async (owner = account) => {
+    if (!owner || !CONTRACT_CONFIGURED) return;
+    try {
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, providerForReads());
+      const filter = contract.filters.SwitchRegistered(null, owner);
+      const events = await contract.queryFilter(filter);
+      const ids = [...new Set(events.map(e => (e as any).args[0]))];
+      const loaded = await Promise.all(ids.map(id => loadSwitch(contract, id)));
+      setOwnedSwitches(loaded);
+      setSelectedSwitchId(current => current || loaded[0]?.id || '');
+    } catch (error) {
+      console.error("Failed to load owned switches", error);
+    }
+  };
+
+  const fetchSwitches = async (offset = 0, append = false) => {
+    if (!CONTRACT_CONFIGURED) {
+      setSwitches([]);
+      setWatcherHasMore(false);
+      return;
+    }
+    try {
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, providerForReads());
+      const filter = contract.filters.SwitchRegistered();
+      const events = await contract.queryFilter(filter);
+      const ids = [...new Set(events.map(e => (e as any).args[0]))].reverse();
+      const pageIds = ids.slice(offset, offset + SWITCH_PAGE_SIZE);
+      const loaded = await Promise.all(pageIds.map(id => loadSwitch(contract, id)));
+      setSwitches(current => append ? [...current, ...loaded] : loaded);
+      setWatcherOffset(offset + pageIds.length);
+      setWatcherHasMore(offset + pageIds.length < ids.length);
+    } catch (error) {
+      console.error("Failed to fetch switches", error);
+    }
   };
 
   const handleRegister = async () => {
     if (!account) return alert("Connect wallet first!");
-    if (!evidenceText) return alert("Please enter some evidence!");
-    if (!bountyEth) return alert("Please enter a bounty amount!");
-    
+    if (!CONTRACT_CONFIGURED) return alert("Set VITE_CONTRACT_ADDRESS to a deployed contract address first.");
+    if (!evidenceText || !bountyEth) return alert("Enter evidence and a bounty amount first!");
+
     setIsProcessing(true);
-    setStatus("Encrypting Evidence...");
-    
+    setStatus("Encrypting evidence...");
     try {
+      const switchId = ethers.hexlify(window.crypto.getRandomValues(new Uint8Array(32)));
       const key = await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-      const rawKeyBuffer = await window.crypto.subtle.exportKey("raw", key);
-      const aesKeyBase64 = arrayBufferToBase64(rawKeyBuffer);
-
+      const aesKey = arrayBufferToBase64(await window.crypto.subtle.exportKey("raw", key));
       const iv = window.crypto.getRandomValues(new Uint8Array(12));
-      const encoder = new TextEncoder();
-      const encodedEvidence = encoder.encode(evidenceText);
-      
-      const ciphertextBuffer = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, encodedEvidence);
-      const combinedBuffer = new Uint8Array(iv.length + ciphertextBuffer.byteLength);
-      combinedBuffer.set(iv, 0);
-      combinedBuffer.set(new Uint8Array(ciphertextBuffer), iv.length);
-      const ciphertextBase64 = arrayBufferToBase64(combinedBuffer.buffer);
+      const evidence = new TextEncoder().encode(evidenceText);
+      const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, evidence);
+      const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+      combined.set(iv);
+      combined.set(new Uint8Array(ciphertext), iv.length);
+      const evidenceHash = "0x" + Array.from(new Uint8Array(await window.crypto.subtle.digest("SHA-256", evidence))).map(byte => byte.toString(16).padStart(2, '0')).join('');
 
-      const hashBuffer = await window.crypto.subtle.digest("SHA-256", encodedEvidence);
-      const evidenceHashHex = "0x" + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-
-      setStatus("Sending to Lit Protocol Simulator...");
-      
-      const litRes = await fetch("http://localhost:3000/store-key", {
+      setStatus("Securing key with Lit simulator...");
+      const litResponse = await fetch("http://localhost:3000/store-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          journalistAddress: account,
-          aesKey: aesKeyBase64,
-          evidenceHash: evidenceHashHex,
-          ciphertext: ciphertextBase64
-        })
+        body: JSON.stringify({ switchId, journalistAddress: account, aesKey, evidenceHash, ciphertext: arrayBufferToBase64(combined.buffer) })
       });
-      
-      const litData = await litRes.json();
-      if (!litData.success) throw new Error("Lit nodes rejected the payload");
+      if (!litResponse.ok || !(await litResponse.json()).success) throw new Error("Lit nodes rejected the payload");
 
-      setStatus("Registering Smart Contract...");
-      
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
+      setStatus("Registering switch...");
+      const signer = await new ethers.BrowserProvider((window as any).ethereum).getSigner();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-      
-      const value = ethers.parseEther(bountyEth);
-      const gracePeriodBlocks = 10; // Small grace period for demo
-      const tx = await contract.register_switch(
-        windowBlocks,
-        gracePeriodBlocks,
-        "arweave_mock_tx_123",
-        evidenceHashHex,
-        ethers.ZeroAddress, // duress_wallet
-        ethers.ZeroAddress, // backup_wallet
-        { value }
-      );
-      
-      setStatus("Waiting for confirmation...");
+      const tx = await contract.register_switch(switchId, windowBlocks, 10, "arweave_mock_tx_123", evidenceHash, ethers.ZeroAddress, ethers.ZeroAddress, { value: ethers.parseEther(bountyEth) });
       await tx.wait();
-      
-      setStatus("Armed");
+      setSelectedSwitchId(switchId);
+      setEvidenceText('');
+      setStatus("Switch armed");
+      await refreshOwnedSwitches();
+      alert("Switch successfully armed! You can create another one with this wallet.");
+    } catch (error: any) {
+      console.error(error);
+      setStatus("Ready to arm another switch");
+      alert("Failed: " + error.message);
+    } finally {
       setIsProcessing(false);
-      alert("Switch successfully armed! Bounty deposited.");
-      
-    } catch (e: any) {
-      console.error(e);
-      setStatus("Unregistered");
-      setIsProcessing(false);
-      alert("Failed: " + e.message);
     }
   };
 
   const handleHeartbeat = async () => {
-    if (!account) return alert("Connect wallet first!");
-    const provider = new ethers.BrowserProvider((window as any).ethereum);
-    const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    if (!CONTRACT_CONFIGURED) return alert("Set VITE_CONTRACT_ADDRESS to a deployed contract address first.");
+    const selected = ownedSwitches.find(sw => sw.id === selectedSwitchId);
+    if (!selected) return alert("Choose one of your switches first.");
     try {
       setIsProcessing(true);
-      const tx = await contract.heartbeat(account, heartbeatNonce);
-      await tx.wait();
-      setHeartbeatNonce(prev => prev + 1);
-      alert("Heartbeat successfully sent! Timer reset.");
-      setIsProcessing(false);
-    } catch (e: any) {
-      console.error(e);
-      alert("Heartbeat failed: " + e.message);
+      const signer = await new ethers.BrowserProvider((window as any).ethereum).getSigner();
+      await (await new ethers.Contract(CONTRACT_ADDRESS, ABI, signer).heartbeat(selected.id, selected.lastNonce + 1n)).wait();
+      await refreshOwnedSwitches();
+      alert("Heartbeat successfully sent!");
+    } catch (error: any) {
+      console.error(error);
+      alert("Heartbeat failed: " + error.message);
+    } finally {
       setIsProcessing(false);
     }
   };
 
-  // Watcher Functions
-  const fetchSwitches = async () => {
+  const handleBotAction = async (method: 'trigger_release' | 'claim_bounty', switchId: string) => {
+    if (!account) return alert("Connect wallet first!");
+    if (!CONTRACT_CONFIGURED) return alert("Set VITE_CONTRACT_ADDRESS to a deployed contract address first.");
     try {
-      const provider = new ethers.JsonRpcProvider("https://sepolia-rollup.arbitrum.io/rpc"); // Or window.ethereum
-      // If no contract deployed yet, mock data for the UI
-      if (CONTRACT_ADDRESS === "0x0000000000000000000000000000000000000000") {
-        setSwitches([
-          { address: "0x1234...abcd", active: true, triggered: false, bounty: "0.01 ETH" },
-          { address: "0xdead...beef", active: true, triggered: true, bounty: "0.05 ETH (Claimed)" }
-        ]);
-        return;
-      }
-      
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
-      const count = await contract.get_registered_journalists_count();
-      
-      let loadedSwitches = [];
-      for (let i = 0; i < count; i++) {
-        const addr = await contract.get_registered_journalist(i);
-        const info = await contract.get_switch_info(addr);
-        loadedSwitches.push({
-          address: addr,
-          active: info.is_active,
-          triggered: info.is_triggered,
-          bounty: ethers.formatEther(info.bounty_amount) + " ETH" + (info.bounty_claimed ? " (Claimed)" : "")
-        });
-      }
-      setSwitches(loadedSwitches);
-    } catch (e) {
-      console.error("Failed to fetch switches", e);
+      setIsProcessing(true);
+      const signer = await new ethers.BrowserProvider((window as any).ethereum).getSigner();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      const tx = method === 'trigger_release'
+        ? await contract.trigger_release(switchId)
+        : await contract.claim_bounty(switchId, "0xdeadbeef");
+      await tx.wait();
+      await fetchSwitches();
+    } catch (error: any) {
+      console.error(error);
+      alert(`${method} failed: ${error.message}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   useEffect(() => {
-    if (activeTab === 'watcher') {
-      fetchSwitches();
-    }
+    setOwnedSwitches([]);
+    setSelectedSwitchId('');
+    refreshOwnedSwitches();
+  }, [account]);
+  useEffect(() => {
+    if (activeTab === 'watcher') fetchSwitches();
   }, [activeTab]);
 
-  const handleBotTrigger = async (journalistAddr: string) => {
-    if (!account) return alert("Connect wallet to act as a bot!");
-    const provider = new ethers.BrowserProvider((window as any).ethereum);
-    const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    try {
-      setIsProcessing(true);
-      const tx = await contract.trigger_release(journalistAddr);
-      await tx.wait();
-      setIsProcessing(false);
-      alert("Trigger fired! The Lit Action is now decrypting and publishing the evidence.");
-      fetchSwitches();
-    } catch (e: any) {
-      console.error(e);
-      setIsProcessing(false);
-      alert("Trigger failed: " + e.message);
-    }
-  };
-
-  const handleBotClaim = async (journalistAddr: string) => {
-    if (!account) return alert("Connect wallet first!");
-    const provider = new ethers.BrowserProvider((window as any).ethereum);
-    const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    try {
-      setIsProcessing(true);
-      // In a real scenario, this proof comes from the Lit Action response.
-      const mockProof = "0xdeadbeef"; 
-      const tx = await contract.claim_bounty(journalistAddr, mockProof);
-      await tx.wait();
-      setIsProcessing(false);
-      alert("Bounty claimed successfully!");
-      fetchSwitches();
-    } catch (e: any) {
-      console.error(e);
-      setIsProcessing(false);
-      alert("Claim failed: " + e.message);
-    }
-  };
-
-  return (
-    <div className="container">
-      <h1>Vault Bomb</h1>
-      <div className="subtitle">Unstoppable Dead-Man's Switch (Powered by Lit Protocol)</div>
-      
-      <div style={{display: 'flex', gap: '10px', marginBottom: '2rem'}}>
-        <button 
-          style={{background: activeTab === 'setup' ? '#ff3366' : '#222', flex: 1}}
-          onClick={() => setActiveTab('setup')}>Journalist Setup</button>
-        <button 
-          style={{background: activeTab === 'watcher' ? '#00b09b' : '#222', flex: 1}}
-          onClick={() => setActiveTab('watcher')}>Public Watcher Dashboard</button>
-      </div>
-
-      {activeTab === 'setup' && (
-        <>
-          {!account ? (
-            <div style={{textAlign: "center", marginTop: "3rem"}}>
-              <button onClick={connectWallet} style={{width: 'auto'}}>Connect MetaMask Wallet</button>
-            </div>
-          ) : (
-            <div>
-              <div className="card" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                <div>
-                  <div style={{fontSize: '0.8rem', color: '#8a8a9d', marginBottom: '4px'}}>Connected Wallet</div>
-                  <div style={{fontFamily: 'monospace', fontSize: '1rem'}}>{account.substring(0,6)}...{account.substring(account.length-4)}</div>
-                </div>
-                <div className={`status ${status.toLowerCase()}`}>
-                  Status: {status}
-                </div>
-              </div>
-
-              <div className="card">
-                <h2>1. Secure Your Evidence</h2>
-                
-                <label>The Truth (Text to Encrypt & Publish on Trigger)</label>
-                <textarea 
-                  rows={4}
-                  value={evidenceText}
-                  onChange={(e) => setEvidenceText(e.target.value)}
-                  placeholder="Enter the sensitive information here..."
-                  disabled={status !== 'Unregistered' || isProcessing}
-                />
-
-                <div style={{display: 'flex', gap: '20px'}}>
-                  <div style={{flex: 1}}>
-                    <label>Heartbeat Window (Blocks)</label>
-                    <input 
-                      type="number" 
-                      value={windowBlocks} 
-                      onChange={e => setWindowBlocks(e.target.value)}
-                      disabled={status !== 'Unregistered' || isProcessing} 
-                    />
-                  </div>
-                  <div style={{flex: 1}}>
-                    <label>Bounty (ETH)</label>
-                    <input 
-                      type="text" 
-                      value={bountyEth} 
-                      onChange={e => setBountyEth(e.target.value)}
-                      disabled={status !== 'Unregistered' || isProcessing} 
-                    />
-                  </div>
-                </div>
-                
-                {status === 'Unregistered' && (
-                  <div style={{marginTop: '1rem'}}>
-                    <button onClick={handleRegister} disabled={isProcessing}>
-                      {isProcessing ? (<span><span className="loader"></span>Processing...</span>) : "Encrypt & Arm Switch"}
-                    </button>
-                    <div className="help-text">
-                      Local encryption -&gt; Lit Protocol Access Control setup -&gt; Smart Contract Registration + Bounty Deposit.
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="card">
-                <h2>2. Proof of Life</h2>
-                <button className="btn-success" onClick={handleHeartbeat} disabled={status !== 'Armed' || isProcessing}>
-                  Send Heartbeat (I am safe)
-                </button>
-                <div className="help-text">
-                  Reset the countdown timer. If you fail to do this, anyone can claim your bounty and trigger the release.
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {activeTab === 'watcher' && (
-        <div>
-          <h2>Watcher Dashboard</h2>
-          <p style={{color: '#8a8a9d'}}>Publicly monitoring active dead-man's switches.</p>
-          
-          <button onClick={connectWallet} style={{width: 'auto', marginBottom: '20px', background: '#333'}}>
-            {account ? `Connected as Bot: ${account.substring(0,6)}...` : "Connect Wallet (To act as MEV Bot)"}
-          </button>
-
-          {switches.length === 0 ? (
-            <div className="card">No switches active on this network.</div>
-          ) : (
-            switches.map((sw, idx) => (
-              <div key={idx} className="card" style={{borderLeft: sw.triggered ? '4px solid #ff5252' : '4px solid #00e676'}}>
-                <div style={{display: 'flex', justifyContent: 'space-between'}}>
-                  <div>
-                    <strong>Journalist:</strong> <span style={{fontFamily: 'monospace'}}>{sw.address}</span>
-                  </div>
-                  <div style={{color: sw.triggered ? '#ff5252' : '#00e676'}}>
-                    {sw.triggered ? 'RELEASED' : 'ARMED'}
-                  </div>
-                </div>
-                <div style={{marginTop: '10px', fontSize: '0.9rem', color: '#8a8a9d'}}>
-                  Bounty Pool: {sw.bounty}
-                </div>
-                
-                {account && !sw.triggered && (
-                  <button className="btn-danger" style={{marginTop: '15px'}} onClick={() => handleBotTrigger(sw.address)} disabled={isProcessing}>
-                    triggerRelease()
-                  </button>
-                )}
-                
-                {account && sw.triggered && !sw.bounty.includes("Claimed") && (
-                  <button className="btn-success" style={{marginTop: '15px'}} onClick={() => handleBotClaim(sw.address)} disabled={isProcessing}>
-                    claimBounty(lit_proof)
-                  </button>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
+  return <div className="container">
+    <h1>Vault Bomb</h1>
+    <div className="subtitle">Unstoppable Dead-Man's Switch (Powered by Lit Protocol)</div>
+    <div style={{ display: 'flex', gap: '10px', marginBottom: '2rem' }}>
+      <button style={{ background: activeTab === 'setup' ? '#ff3366' : '#222', flex: 1 }} onClick={() => setActiveTab('setup')}>Journalist Setup</button>
+      <button style={{ background: activeTab === 'watcher' ? '#00b09b' : '#222', flex: 1 }} onClick={() => setActiveTab('watcher')}>Public Watcher Dashboard</button>
     </div>
-  )
+
+    {activeTab === 'setup' && (!account ? <div style={{ textAlign: 'center', marginTop: '3rem' }}><button onClick={connectWallet} style={{ width: 'auto' }}>Connect MetaMask Wallet</button></div> : <div>
+      <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div><div style={{ fontSize: '0.8rem', color: '#8a8a9d', marginBottom: '4px' }}>Connected Wallet</div><div style={{ fontFamily: 'monospace' }}>{account.substring(0, 6)}...{account.substring(account.length - 4)}</div></div>
+        <div className="status">Status: {status}</div>
+      </div>
+      <div className="card">
+        <h2>Secure New Evidence</h2>
+        <label>The Truth (Text to Encrypt & Publish on Trigger)</label>
+        <textarea rows={4} value={evidenceText} onChange={event => setEvidenceText(event.target.value)} placeholder="Enter sensitive information here..." disabled={isProcessing} />
+        <div style={{ display: 'flex', gap: '20px' }}>
+          <div style={{ flex: 1 }}><label>Heartbeat Window (Blocks)</label><input type="number" value={windowBlocks} onChange={event => setWindowBlocks(event.target.value)} disabled={isProcessing} /></div>
+          <div style={{ flex: 1 }}><label>Bounty (ETH)</label><input type="text" value={bountyEth} onChange={event => setBountyEth(event.target.value)} disabled={isProcessing} /></div>
+        </div>
+        <button onClick={handleRegister} disabled={!CONTRACT_CONFIGURED || isProcessing}>{isProcessing ? 'Processing...' : 'Encrypt & Arm Switch'}</button>
+      </div>
+      <div className="card">
+        <h2>Proof of Life</h2>
+        {ownedSwitches.length > 0 && <select value={selectedSwitchId} onChange={event => setSelectedSwitchId(event.target.value)} disabled={isProcessing}>
+          {ownedSwitches.map(sw => <option key={sw.id} value={sw.id}>{sw.id.slice(0, 12)}... — {sw.triggered ? 'Released' : 'Armed'}</option>)}
+        </select>}
+        <button className="btn-success" onClick={handleHeartbeat} disabled={!selectedSwitchId || isProcessing}>Send Heartbeat (I am safe)</button>
+      </div>
+    </div>)}
+
+    {activeTab === 'watcher' && <div>
+      <h2>Watcher Dashboard</h2>
+      <button onClick={connectWallet} style={{ width: 'auto', marginBottom: '20px', background: '#333' }}>{account ? `Connected as Bot: ${account.substring(0, 6)}...` : 'Connect Wallet (To act as MEV Bot)'}</button>
+      {!CONTRACT_CONFIGURED ? <div className="card">Set <code>VITE_CONTRACT_ADDRESS</code> to a deployed contract address.</div> : switches.length === 0 ? <div className="card">No switches active on this network.</div> : switches.map(sw => <div key={sw.id} className="card" style={{ borderLeft: sw.triggered ? '4px solid #ff5252' : '4px solid #00e676' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}><div><strong>Owner:</strong> <span style={{ fontFamily: 'monospace' }}>{sw.owner}</span><br /><strong>Switch:</strong> <span style={{ fontFamily: 'monospace' }}>{sw.id}</span></div><div style={{ color: sw.triggered ? '#ff5252' : '#00e676' }}>{sw.triggered ? 'RELEASED' : 'ARMED'}</div></div>
+        <div style={{ marginTop: '10px', fontSize: '0.9rem', color: '#8a8a9d' }}>Bounty Pool: {sw.bounty} ETH{sw.bountyClaimed ? ' (Claimed)' : ''}</div>
+        {account && !sw.triggered && <button className="btn-danger" style={{ marginTop: '15px' }} onClick={() => handleBotAction('trigger_release', sw.id)} disabled={isProcessing}>triggerRelease()</button>}
+        {account && sw.triggered && !sw.bountyClaimed && <button className="btn-success" style={{ marginTop: '15px' }} onClick={() => handleBotAction('claim_bounty', sw.id)} disabled={isProcessing}>claimBounty(lit_proof)</button>}
+      </div>)}
+      {watcherHasMore && <button onClick={() => fetchSwitches(watcherOffset, true)} disabled={isProcessing}>Load more switches</button>}
+    </div>}
+  </div>;
 }
 
 export default App
