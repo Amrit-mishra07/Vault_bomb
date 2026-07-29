@@ -173,11 +173,18 @@ impl VaultBomb {
         }
 
         sw.bounty_claimed.set(true);
+        let amount = sw.bounty_amount.get();
+        if amount > U256::ZERO {
+            if let Err(_) = stylus_sdk::call::transfer_eth(caller, amount) {
+                return Err("ETH transfer failed".as_bytes().to_vec());
+            }
+        }
+
         evm::log(BountyClaimed {
             switchId: switch_id,
             journalist: sw.registered_wallet.get(),
             triggerer: caller,
-            amount: sw.bounty_amount.get(),
+            amount,
         });
         Ok(())
     }
@@ -189,6 +196,27 @@ impl VaultBomb {
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&perform_data);
         self.trigger_release(B256::from(bytes))
+    }
+
+    pub fn check_upkeep(&self, check_data: Bytes) -> Result<(bool, Bytes), Vec<u8>> {
+        if check_data.len() != 32 {
+            return Ok((false, check_data));
+        }
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&check_data);
+        let switch_id = B256::from(bytes);
+
+        let sw = self.switches.getter(switch_id);
+        if !sw.is_active.get() || sw.is_triggered.get() {
+            return Ok((false, check_data));
+        }
+        
+        let current_block = U256::from(block::number());
+        if current_block <= sw.last_heartbeat_block.get() + sw.heartbeat_window_blocks.get() + sw.grace_period_blocks.get() {
+            return Ok((false, check_data));
+        }
+
+        Ok((true, check_data))
     }
 
     pub fn get_switch_info(
