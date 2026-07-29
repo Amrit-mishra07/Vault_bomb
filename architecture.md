@@ -65,13 +65,13 @@ deadmans-switch/
 1. Owner encrypts evidence (AES-256) → uploads ciphertext to Arweave (`txID_ciphertext`).
 2. Owner sends the AES key + `txID_ciphertext` to the TEE/Lit Action over an attested channel; key never leaves custody.
 3. TEE/Lit Action acknowledges key receipt (signed).
-4. Only after acknowledgment: owner calls `registerSwitch()` with the heartbeat window, grace period, `txID_ciphertext`, `SHA-256(ciphertext)`, custody address, registered/backup/duress wallets.
+4. The client generates a cryptographically random `switchId`, stores the key under that ID, and only after acknowledgment calls `register_switch(switchId, ...)` with the heartbeat window, grace period, `txID_ciphertext`, `SHA-256(ciphertext)`, and registered/backup/duress wallets. One owner wallet may register any number of IDs.
 5. Owner registers Chainlink Upkeep and Gelato jobs, funds the bounty escrow.
 
 This ordering (ciphertext → key-into-custody → registration) is a required invariant: registration must never happen before custody confirms it holds the key.
 
 ### 4.2 Normal operation
-- Owner calls `heartbeat(nonce)` from the registered (or backup) wallet every N days; nonce must be strictly increasing (replay protection).
+- Owner calls `heartbeat(switchId, nonce)` from the registered (or backup) wallet every N days for each switch; nonce must be strictly increasing per switch (replay protection).
 - Automation checks the window on schedule; no action while the heartbeat is current.
 
 ### 4.3 Trigger
