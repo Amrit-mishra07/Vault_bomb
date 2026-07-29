@@ -11,18 +11,25 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 // Mocking Lit Protocol's decentralized MPC state
-const litKeyStore = new Map(); // Map<journalistAddress, {aesKey, evidenceHash, ciphertext}>
+const litKeyStore = new Map(); // Map<switchId, {aesKey, evidenceHash, ciphertext}>
 
 app.post("/store-key", (req, res) => {
-    const { journalistAddress, aesKey, evidenceHash, ciphertext } = req.body;
-    if (!journalistAddress || !aesKey || !evidenceHash || !ciphertext) {
+    const { switchId, journalistAddress, aesKey, evidenceHash, ciphertext } = req.body;
+    if (!switchId || !journalistAddress || !aesKey || !evidenceHash || !ciphertext) {
         return res.status(400).json({ error: "Missing parameters" });
     }
+    if (!ethers.isHexString(switchId, 32) || switchId === ethers.ZeroHash) {
+        return res.status(400).json({ error: "switchId must be a non-zero bytes32 hex value" });
+    }
+    const key = switchId.toLowerCase();
+    if (litKeyStore.has(key)) {
+        return res.status(409).json({ error: "Key already stored for this switchId" });
+    }
     
-    console.log(`\n[LIT PROTOCOL] Securing key and evidence for journalist: ${journalistAddress}`);
+    console.log(`\n[LIT PROTOCOL] Securing key and evidence for switch ${switchId} owned by: ${journalistAddress}`);
     console.log(`[LIT PROTOCOL] Access Control Condition (ACC): "triggerRelease() must be called on-chain"`);
     
-    litKeyStore.set(journalistAddress.toLowerCase(), {
+    litKeyStore.set(key, {
         aesKey,
         evidenceHash,
         ciphertext
@@ -50,21 +57,21 @@ if (CONTRACT_ADDRESS) {
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     // ABI matching the Stylus contract event
     const abi = [
-        "event Triggered(address indexed journalist, address indexed triggerer, string arweaveTxId)"
+        "event Triggered(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, string arweaveTxId)"
     ];
     const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
     
     console.log(`Listening for ACC unlock on ${CONTRACT_ADDRESS}...`);
     
-    contract.on("Triggered", async (journalist, triggerer, arweaveTxId) => {
+    contract.on("Triggered", async (switchId, journalist, triggerer, arweaveTxId) => {
         console.log(`\n======================================================`);
         console.log(`🚨 LIT ACTION UNLOCKED FOR ${journalist} 🚨`);
         console.log(`Triggered by Bounty Hunter: ${triggerer}`);
         console.log(`======================================================`);
         
-        const keyData = litKeyStore.get(journalist.toLowerCase());
+        const keyData = litKeyStore.get(switchId.toLowerCase());
         if (!keyData) {
-            console.error(`[X] Error: Key not found in Lit nodes for ${journalist}`);
+            console.error(`[X] Error: Key not found in Lit nodes for switch ${switchId}`);
             return;
         }
 
@@ -106,7 +113,7 @@ if (CONTRACT_ADDRESS) {
             console.log(`\n[SUCCESS] Unstoppable Release Complete!`);
             
             // Generate the bounty claim proof
-            const publicationProof = "0x" + crypto.createHash("sha256").update("PUBLISHED" + journalist).digest("hex");
+            const publicationProof = "0x" + crypto.createHash("sha256").update("PUBLISHED" + switchId).digest("hex");
             console.log(`\n💰 BOUNTY PROOF FOR TRIGGERER 💰`);
             console.log(`Triggerer ${triggerer} can now call claim_bounty() with this Lit Proof:`);
             console.log(`${publicationProof}`);
