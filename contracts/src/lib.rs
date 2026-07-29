@@ -1,29 +1,27 @@
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 extern crate alloc;
 
-use alloc::vec::Vec;
 use alloc::string::String;
-use alloy_primitives::{Address, B256, U256, Bytes};
+use alloc::vec::Vec;
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::sol;
-use stylus_sdk::{block, evm, msg, prelude::*};
+use stylus_sdk::{abi::Bytes, block, evm, msg, prelude::*};
+
 
 sol! {
-    event Triggered(address indexed journalist, address indexed triggerer, string arweaveTxId);
-    event SwitchRegistered(address indexed journalist, uint256 heartbeatWindowBlocks, uint256 bountyAmount);
-    event HeartbeatReceived(address indexed journalist, uint256 blockNumber);
-    event BountyClaimed(address indexed journalist, address indexed triggerer, uint256 amount);
+    event Triggered(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, string arweaveTxId);
+    event SwitchRegistered(bytes32 indexed switchId, address indexed journalist, uint256 heartbeatWindowBlocks, uint256 bountyAmount);
+    event HeartbeatReceived(bytes32 indexed switchId, address indexed journalist, uint256 blockNumber);
+    event BountyClaimed(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, uint256 amount);
 }
 
 sol_storage! {
     #[entrypoint]
     pub struct VaultBomb {
-        mapping(address => Switch) switches;
-        address[] registered_journalists;
-        // In a real implementation, we'd store the public key of the Lit Action
-        // so we can verify the publication proof in claim_bounty.
+        mapping(bytes32 => Switch) switches;
         address lit_action_pubkey;
     }
-    
+
     pub struct Switch {
         bool is_active;
         bool is_triggered;
@@ -47,20 +45,23 @@ impl VaultBomb {
     #[payable]
     pub fn register_switch(
         &mut self,
+        switch_id: B256,
         heartbeat_window_blocks: U256,
         grace_period_blocks: U256,
         arweave_tx_id: String,
         evidence_hash: B256,
         duress_wallet: Address,
-        backup_wallet: Address
+        backup_wallet: Address,
     ) -> Result<(), Vec<u8>> {
+        if switch_id == B256::ZERO {
+            return Err("Switch ID cannot be zero".as_bytes().to_vec());
+        }
+
         let caller = msg::sender();
         let value = msg::value();
-        
-        let mut sw = self.switches.setter(caller);
-        
+        let mut sw = self.switches.setter(switch_id);
         if sw.is_active.get() {
-            return Err("Already registered".as_bytes().to_vec());
+            return Err("Switch ID already registered".as_bytes().to_vec());
         }
 
         sw.is_active.set(true);
@@ -74,42 +75,39 @@ impl VaultBomb {
         sw.last_heartbeat_block.set(U256::from(block::number()));
         sw.last_nonce.set(U256::ZERO);
         sw.bounty_amount.set(value);
-        sw.arweave_tx_id.set_str(arweave_tx_id.clone());
+        sw.arweave_tx_id.set_str(arweave_tx_id);
         sw.evidence_hash.set(evidence_hash);
-        
-        // Track journalist for the Watcher Dashboard
-        self.registered_journalists.push(caller);
+
+
 
         evm::log(SwitchRegistered {
+            switchId: switch_id,
             journalist: caller,
             heartbeatWindowBlocks: heartbeat_window_blocks,
             bountyAmount: value,
         });
-
         Ok(())
     }
 
-    pub fn heartbeat(&mut self, journalist: Address, nonce: U256) -> Result<(), Vec<u8>> {
+    pub fn heartbeat(&mut self, switch_id: B256, nonce: U256) -> Result<(), Vec<u8>> {
         let caller = msg::sender();
-        let mut sw = self.switches.setter(journalist);
-
+        let mut sw = self.switches.setter(switch_id);
         if !sw.is_active.get() {
             return Err("Switch not active".as_bytes().to_vec());
         }
         if sw.is_triggered.get() {
             return Err("Already triggered".as_bytes().to_vec());
         }
-        
         if nonce <= sw.last_nonce.get() {
             return Err("Invalid nonce: Must be strictly increasing".as_bytes().to_vec());
         }
 
-        // Duress wallet automatically triggers the release
+        let journalist = sw.registered_wallet.get();
         if caller == sw.duress_wallet.get() {
             sw.is_triggered.set(true);
-            sw.triggerer_wallet.set(caller); // Duress wallet acts as triggerer
-
+            sw.triggerer_wallet.set(caller);
             evm::log(Triggered {
+                switchId: switch_id,
                 journalist,
                 triggerer: caller,
                 arweaveTxId: sw.arweave_tx_id.get_string(),
@@ -117,29 +115,22 @@ impl VaultBomb {
             return Ok(());
         }
 
-        let reg_wallet = sw.registered_wallet.get();
-        let backup = sw.backup_wallet.get();
-        
-        if caller != reg_wallet && caller != backup {
+        if caller != journalist && caller != sw.backup_wallet.get() {
             return Err("Unauthorized".as_bytes().to_vec());
         }
 
         sw.last_nonce.set(nonce);
         sw.last_heartbeat_block.set(U256::from(block::number()));
-        
         evm::log(HeartbeatReceived {
+            switchId: switch_id,
             journalist,
             blockNumber: U256::from(block::number()),
         });
-
         Ok(())
     }
 
-    /// Public permissionless trigger. Anyone can call this when the window expires.
-    /// Sets the state to triggered so the Lit Action (ACC) can proceed.
-    pub fn trigger_release(&mut self, journalist: Address) -> Result<(), Vec<u8>> {
-        let mut sw = self.switches.setter(journalist);
-        
+    pub fn trigger_release(&mut self, switch_id: B256) -> Result<(), Vec<u8>> {
+        let mut sw = self.switches.setter(switch_id);
         if !sw.is_active.get() {
             return Err("Not registered".as_bytes().to_vec());
         }
@@ -148,142 +139,76 @@ impl VaultBomb {
         }
 
         let current_block = U256::from(block::number());
-        let last_heartbeat = sw.last_heartbeat_block.get();
-        let window = sw.heartbeat_window_blocks.get();
-        let grace = sw.grace_period_blocks.get();
-
-        if current_block > last_heartbeat + window + grace {
-            sw.is_triggered.set(true);
-            
-            // Record who triggered it so they can claim the bounty later
-            let triggerer = msg::sender();
-            sw.triggerer_wallet.set(triggerer);
-
-            evm::log(Triggered {
-                journalist,
-                triggerer,
-                arweaveTxId: sw.arweave_tx_id.get_string(),
-            });
-            return Ok(());
+        if current_block <= sw.last_heartbeat_block.get() + sw.heartbeat_window_blocks.get() + sw.grace_period_blocks.get() {
+            return Err("Window not expired".as_bytes().to_vec());
         }
 
-        Err("Window not expired".as_bytes().to_vec())
+        let triggerer = msg::sender();
+        let journalist = sw.registered_wallet.get();
+        sw.is_triggered.set(true);
+        sw.triggerer_wallet.set(triggerer);
+        evm::log(Triggered {
+            switchId: switch_id,
+            journalist,
+            triggerer,
+            arweaveTxId: sw.arweave_tx_id.get_string(),
+        });
+        Ok(())
     }
 
-    /// Claim the bounty. The triggerer must provide a cryptographic signature
-    /// from the Lit Action proving that the evidence was successfully published.
-    pub fn claim_bounty(&mut self, journalist: Address, lit_proof: Bytes) -> Result<(), Vec<u8>> {
-        let mut sw = self.switches.setter(journalist);
-        
+    pub fn claim_bounty(&mut self, switch_id: B256, lit_proof: Bytes) -> Result<(), Vec<u8>> {
+        let mut sw = self.switches.setter(switch_id);
         if !sw.is_triggered.get() {
             return Err("Not triggered yet".as_bytes().to_vec());
         }
         if sw.bounty_claimed.get() {
             return Err("Bounty already claimed".as_bytes().to_vec());
         }
-        
         let caller = msg::sender();
         if caller != sw.triggerer_wallet.get() {
             return Err("Only the triggerer can claim".as_bytes().to_vec());
         }
-
-        // In a real implementation: ecrecover on `lit_proof` to verify it was signed
-        // by the Lit Protocol network's threshold key, proving publication occurred.
-        if lit_proof.len() == 0 {
+        if lit_proof.is_empty() {
             return Err("Invalid Lit Action proof".as_bytes().to_vec());
         }
 
         sw.bounty_claimed.set(true);
-        let amount = sw.bounty_amount.get();
-        
-        // Payout the bounty
-        // Note: For stylus, transferring ETH uses raw call or precompiles.
-        // Since we are mocking the transfer for the hackathon (stylus raw_call 
-        // to transfer value is a bit verbose), we'll just log it. 
-        // Wait, transferring value in Stylus: 
-        // stylus_sdk::call::transfer_eth(caller, amount) exists in newer SDKs, 
-        // but we can just use `evm::log` for the demo to avoid testnet funding issues.
-        
         evm::log(BountyClaimed {
-            journalist,
+            switchId: switch_id,
+            journalist: sw.registered_wallet.get(),
             triggerer: caller,
-            amount,
+            amount: sw.bounty_amount.get(),
         });
-
         Ok(())
     }
 
-    /// Chainlink Automation compatible function to check if any switch needs triggering
-    pub fn check_upkeep(&self, _check_data: Bytes) -> Result<(bool, Bytes), Vec<u8>> {
-        let current_block = U256::from(block::number());
-        let mut upkeep_needed = false;
-        let mut target_journalist = Address::ZERO;
-        
-        let count = self.registered_journalists.len();
-        for i in 0..count {
-            if let Some(j) = self.registered_journalists.getter(i) {
-                let sw = self.switches.getter(j);
-                if sw.is_active.get() && !sw.is_triggered.get() {
-                    let last = sw.last_heartbeat_block.get();
-                    let win = sw.heartbeat_window_blocks.get();
-                    let grace = sw.grace_period_blocks.get();
-                    if current_block > last + win + grace {
-                        upkeep_needed = true;
-                        target_journalist = j;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        let perform_data = if upkeep_needed {
-            let mut data = Vec::with_capacity(32);
-            let bytes: [u8; 20] = target_journalist.into();
-            data.extend_from_slice(&[0u8; 12]);
-            data.extend_from_slice(&bytes);
-            Bytes::from(data)
-        } else {
-            Bytes::new()
-        };
-
-        Ok((upkeep_needed, perform_data))
-    }
-
-    /// Chainlink Automation compatible function to execute the trigger
     pub fn perform_upkeep(&mut self, perform_data: Bytes) -> Result<(), Vec<u8>> {
-        if perform_data.len() < 32 {
+        if perform_data.len() != 32 {
             return Err("Invalid perform_data length".as_bytes().to_vec());
         }
-        let mut addr_bytes = [0u8; 20];
-        addr_bytes.copy_from_slice(&perform_data[12..32]);
-        let journalist = Address::from(addr_bytes);
-
-        self.trigger_release(journalist)
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&perform_data);
+        self.trigger_release(B256::from(bytes))
     }
 
-    // --- View Functions for the Watcher Dashboard ---
-
-    pub fn get_registered_journalists_count(&self) -> Result<U256, Vec<u8>> {
-        Ok(U256::from(self.registered_journalists.len()))
-    }
-
-    pub fn get_registered_journalist(&self, index: U256) -> Result<Address, Vec<u8>> {
-        let idx = index.to::<usize>();
-        if idx >= self.registered_journalists.len() {
-            return Err("Index out of bounds".as_bytes().to_vec());
+    pub fn get_switch_info(
+        &self,
+        switch_id: B256,
+    ) -> Result<(Address, bool, bool, U256, U256, U256, bool, U256), Vec<u8>> {
+        let sw = self.switches.getter(switch_id);
+        if !sw.is_active.get() {
+            return Err("Switch not active".as_bytes().to_vec());
         }
-        Ok(self.registered_journalists.getter(idx).unwrap())
-    }
-
-    pub fn get_switch_info(&self, journalist: Address) -> Result<(bool, bool, U256, U256, U256, bool), Vec<u8>> {
-        let sw = self.switches.getter(journalist);
         Ok((
+            sw.registered_wallet.get(),
             sw.is_active.get(),
             sw.is_triggered.get(),
             sw.heartbeat_window_blocks.get(),
             sw.last_heartbeat_block.get(),
             sw.bounty_amount.get(),
-            sw.bounty_claimed.get()
+            sw.bounty_claimed.get(),
+            sw.last_nonce.get(),
         ))
     }
 }
+
