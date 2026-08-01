@@ -21,6 +21,7 @@ sol_storage! {
     pub struct VaultBomb {
         mapping(bytes32 => Switch) switches;
         address lit_action_pubkey;
+        address owner;
     }
 
     pub struct Switch {
@@ -44,8 +45,12 @@ sol_storage! {
 #[public]
 impl VaultBomb {
     pub fn initialize_lit_pubkey(&mut self, pubkey: Address) -> Result<(), Vec<u8>> {
-        if self.lit_action_pubkey.get() != Address::ZERO {
-            return Err("Already initialized".as_bytes().to_vec());
+        if self.owner.get() == Address::ZERO {
+            // First call ever — deployer becomes owner
+            self.owner.set(msg::sender());
+        }
+        if msg::sender() != self.owner.get() {
+            return Err("Not owner".as_bytes().to_vec());
         }
         self.lit_action_pubkey.set(pubkey);
         Ok(())
@@ -169,6 +174,9 @@ impl VaultBomb {
         let sw = self.switches.getter(switch_id);
         if !sw.is_triggered.get() {
             return Err("Not triggered yet".as_bytes().to_vec());
+        }
+        if msg::sender() != sw.triggerer_wallet.get() {
+            return Err("Only triggerer can confirm".as_bytes().to_vec());
         }
         evm::log(PlaintextPublished {
             switchId: switch_id,
