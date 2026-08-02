@@ -31,8 +31,12 @@ export function WatcherDashboard() {
 
   const fetchCurrentBlock = async () => {
     try {
-      const block = await getProvider().getBlockNumber();
-      setCurrentBlock(BigInt(block));
+      const provider = getProvider();
+      // Arbitrum EVM block.number returns the L1 block number.
+      // provider.getBlockNumber() returns the L2 block number.
+      // We must fetch the L1 block number to match the contract's block math!
+      const rawBlock = await provider.send("eth_getBlockByNumber", ["latest", false]);
+      setCurrentBlock(BigInt(rawBlock.l1BlockNumber));
     } catch (e) {
       console.error("Failed to fetch block number", e);
     }
@@ -102,15 +106,17 @@ export function WatcherDashboard() {
     setIsLoading(true);
     try {
       const provider = getProvider();
-      const blockNow = BigInt(await provider.getBlockNumber());
-      setCurrentBlock(blockNow);
+      const l2BlockNow = BigInt(await provider.getBlockNumber());
+      const rawBlock = await provider.send("eth_getBlockByNumber", ["latest", false]);
+      const l1BlockNow = BigInt(rawBlock.l1BlockNumber);
+      setCurrentBlock(l1BlockNow);
 
       const contract = await getContract(provider);
       const filter = contract.filters.SwitchRegistered();
 
       // Arbitrum blocks are ~250ms, so scan last ~2M blocks (~6 days).
-      // If no events found, fall back to scanning from block 0.
-      let fromBlock = Number(blockNow) > DEFAULT_SCAN_BLOCKS ? Number(blockNow) - DEFAULT_SCAN_BLOCKS : 0;
+      // We must use the L2 block number for querying events!
+      let fromBlock = Number(l2BlockNow) > DEFAULT_SCAN_BLOCKS ? Number(l2BlockNow) - DEFAULT_SCAN_BLOCKS : 0;
       let events = await contract.queryFilter(filter, fromBlock);
 
       // Fallback: if no events found and we didn't already scan from 0, retry from genesis
@@ -123,7 +129,7 @@ export function WatcherDashboard() {
       const pageIds = ids.slice(offset, offset + SWITCH_PAGE_SIZE);
       const loaded = (await Promise.all(pageIds.map(async id => {
         try {
-          return await loadSwitch(contract, id, blockNow);
+          return await loadSwitch(contract, id, l1BlockNow);
         } catch (e) {
           console.error("Failed to load switch", id, e);
           return null;

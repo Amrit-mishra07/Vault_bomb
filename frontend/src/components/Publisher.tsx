@@ -116,7 +116,7 @@ export function Publisher() {
       </div>
       
       <div className="input-group">
-        <label>Heartbeat Window (Blocks) — ~0.25s per block on Arbitrum</label>
+        <label>Heartbeat Window (Blocks) — ~12s per L1 block on Arbitrum</label>
         <input 
           className="input-field"
           type="number"
