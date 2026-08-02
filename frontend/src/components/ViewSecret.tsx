@@ -19,8 +19,8 @@ export function ViewSecret({ switchId, irysTxId }: { switchId: string, irysTxId:
     setError('');
     
     try {
-      // 1. Fetch payload from Irys gateway
-      const res = await fetch(`https://gateway.irys.xyz/${irysTxId}`);
+      // 1. Fetch payload from Irys gateway (devnet)
+      const res = await fetch(`https://devnet.irys.xyz/${irysTxId}`);
       if (!res.ok) throw new Error("Failed to fetch payload from Irys");
       const { secretCiphertext, iv, litCiphertext, litHash } = await res.json();
 

@@ -39,6 +39,11 @@ export const registerSwitch = async (
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
   
+  const feeData = await provider.getFeeData();
+  const overrides: any = { value: ethers.parseEther(bountyValue) };
+  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
+  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
+
   const tx = await contract.registerSwitch(
     switchId,
     heartbeatBlocks,
@@ -47,7 +52,7 @@ export const registerSwitch = async (
     evidenceHash,
     duressWallet,
     backupWallet,
-    { value: ethers.parseEther(bountyValue) }
+    overrides
   );
   await tx.wait();
   return tx.hash;
