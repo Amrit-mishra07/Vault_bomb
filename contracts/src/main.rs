@@ -6,5 +6,5 @@ pub extern "C" fn main() {}
 
 #[cfg(feature = "export-abi")]
 fn main() {
-    // ABI export handled by stylus-sdk entrypoint macro
+    vault_bomb_contract::print_abi("MIT-OR-APACHE-2.0", "pragma solidity ^0.8.23;");
 }
