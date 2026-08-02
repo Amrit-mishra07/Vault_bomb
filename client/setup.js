@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
-const Irys = require('@irys/sdk');
+const Irys = require('@irys/sdk').default;
 
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc";
@@ -41,7 +41,7 @@ async function main() {
 
     console.log("1.5 Uploading ciphertext to Arweave via Irys Devnet...");
     const irys = new Irys({
-        network: "devnet",
+        url: "https://devnet.irys.xyz",
         token: "ethereum",
         key: PRIVATE_KEY,
         config: { providerUrl: RPC_URL }
