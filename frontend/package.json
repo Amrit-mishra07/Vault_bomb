@@ -14,8 +14,6 @@
   "type": "commonjs",
   "dependencies": {
     "@irys/sdk": "^0.2.11",
-    "@lit-protocol/constants": "^9.0.1",
-    "@lit-protocol/lit-node-client": "^7.4.0",
     "ethers": "^6.17.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
@@ -25,6 +23,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vite-plugin-node-polyfills": "^0.28.0"
   }
 }
