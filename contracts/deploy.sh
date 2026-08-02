@@ -13,10 +13,10 @@ if [ -z "$PRIVATE_KEY" ]; then
 fi
 
 echo "Checking Stylus project..."
-cargo stylus check
+cargo stylus check -e https://sepolia-rollup.arbitrum.io/rpc
 
 echo "Deploying Stylus contract to Arbitrum Sepolia..."
-cargo stylus deploy --private-key $PRIVATE_KEY
+cargo stylus deploy --private-key $PRIVATE_KEY -e https://sepolia-rollup.arbitrum.io/rpc
 
 echo "Deployment complete!"
 echo "To export the ABI for the frontend, run:"
