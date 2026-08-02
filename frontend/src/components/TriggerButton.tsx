@@ -49,9 +49,10 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
         return;
       }
 
-      const overrides: any = {
-        gasPrice: ethers.parseUnits("0.2", "gwei")
-      };
+      const feeData = await provider.getFeeData();
+      const overrides: any = {};
+      if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
+      if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
       const tx = await contract.triggerRelease(switchId, overrides);
       const receipt = await tx.wait();
 

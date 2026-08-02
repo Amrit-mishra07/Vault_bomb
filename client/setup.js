@@ -9,7 +9,7 @@ const LIT_SIMULATOR_URL = process.env.LIT_SIMULATOR_URL || "http://localhost:300
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 const ABI = [
-  "function register_switch(bytes32 switch_id, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable"
+  "function registerSwitch(bytes32 switch_id, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable"
 ];
 
 async function main() {
@@ -69,8 +69,8 @@ async function main() {
         process.exit(1);
     }
     
-    console.log("3. Executing three-phase commit (register_switch)...");
-    const tx = await contract.register_switch(
+    console.log("3. Executing three-phase commit (registerSwitch)...");
+    const tx = await contract.registerSwitch(
         switchId,
         windowBlocks,
         graceBlocks,
