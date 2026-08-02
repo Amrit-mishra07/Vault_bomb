@@ -10,6 +10,11 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
+// Health check endpoint for UptimeRobot to keep the free Render instance awake
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
+
 // Prevent Ethers.js from crashing the app on RPC 429 rate limits
 process.on('uncaughtException', (err) => {
     console.error('[RPC Error] Uncaught Exception:', err.message);
