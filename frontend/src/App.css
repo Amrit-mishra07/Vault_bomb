@@ -1,0 +1,146 @@
+:root {
+  --bg: #0f1115;
+  --panel: #1b1d24;
+  --accent: #f43f5e;
+  --accent-hover: #e11d48;
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  --success: #10b981;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.landing-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  text-align: center;
+}
+
+.landing-page h1 {
+  font-size: 3rem;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.landing-page p {
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.primary-btn {
+  background-color: var(--accent);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.primary-btn:hover {
+  background-color: var(--accent-hover);
+}
+
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  color: var(--accent);
+}
+
+.wallet-badge {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-family: monospace;
+  color: var(--success);
+}
+
+.main-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.main-content > section {
+  width: 100%;
+  max-width: 600px;
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.panel h2 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.input-group {
+  margin-bottom: 1rem;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.input-field {
+  width: 100%;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.75rem;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+textarea.input-field {
+  resize: vertical;
+  min-height: 100px;
+}
