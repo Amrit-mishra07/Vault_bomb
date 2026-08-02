@@ -10,8 +10,38 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-// Mocking Lit Protocol's decentralized MPC state
-const litKeyStore = new Map(); // Map<switchId, {aesKey, evidenceHash, ciphertext}>
+// Prevent Ethers.js from crashing the app on RPC 429 rate limits
+process.on('uncaughtException', (err) => {
+    console.error('[RPC Error] Uncaught Exception:', err.message);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[RPC Error] Unhandled Rejection:', reason.message || reason);
+});
+
+// Mocking Lit Protocol's decentralized MPC state with persistence
+const KEYS_FILE = path.join(__dirname, 'keys.json');
+const litKeyStore = new Map(); 
+
+// Load existing keys
+if (fs.existsSync(KEYS_FILE)) {
+    try {
+        const data = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+        for (const [k, v] of Object.entries(data)) {
+            litKeyStore.set(k, v);
+        }
+        console.log(`Loaded ${litKeyStore.size} keys from disk.`);
+    } catch (e) {
+        console.error("Failed to load keys.json:", e.message);
+    }
+}
+
+const saveKeys = () => {
+    const obj = {};
+    for (const [k, v] of litKeyStore.entries()) {
+        obj[k] = v;
+    }
+    fs.writeFileSync(KEYS_FILE, JSON.stringify(obj, null, 2));
+};
 
 app.post("/store-key", (req, res) => {
     const { switchId, journalistAddress, aesKey, evidenceHash, ciphertext } = req.body;
@@ -34,6 +64,7 @@ app.post("/store-key", (req, res) => {
         evidenceHash,
         ciphertext
     });
+    saveKeys();
 
     res.json({
         success: true,
@@ -47,6 +78,15 @@ app.listen(PORT, () => {
     console.log(`Waiting for blockchain ACC unlocks...`);
 });
 
+app.get("/get-key/:switchId", (req, res) => {
+    const key = req.params.switchId.toLowerCase();
+    if (!litKeyStore.has(key)) {
+        return res.status(404).json({ error: "Key not found" });
+    }
+    const data = litKeyStore.get(key);
+    res.json({ aesKey: data.aesKey });
+});
+
 // ---------------------------------------------------------
 // Listen for Blockchain Trigger Events (ACC Unlock)
 // ---------------------------------------------------------
@@ -55,6 +95,7 @@ const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 
 if (CONTRACT_ADDRESS) {
     const provider = new ethers.JsonRpcProvider(RPC_URL);
+    provider.pollingInterval = 12000; // Poll every 12 seconds instead of aggressively to avoid 429s
     // ABI matching the Stylus contract event
     const abi = [
         "event Triggered(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, string arweaveTxId)"
