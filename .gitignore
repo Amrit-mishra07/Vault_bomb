@@ -19,5 +19,10 @@ contracts/target/
 
 # TEE / Lit simulator outputs
 lit-simulator/released_evidence_*.txt
+lit-simulator/keys.json
+
+# Temp files
+.tmp_*/
+*.diff
 
 .agents
