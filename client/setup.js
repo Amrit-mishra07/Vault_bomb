@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
+const Irys = require('@irys/sdk');
 
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc";
@@ -21,7 +22,7 @@ async function main() {
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
     const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
-    const evidenceText = "This is the highly sensitive whistleblower evidence.";
+    const evidenceText = "This would be the highly sensitive whistleblower evidence.";
     const windowBlocks = 50n;
     const graceBlocks = 10n;
     const bountyEth = "0.01";
@@ -37,6 +38,17 @@ async function main() {
     
     const ciphertext = Buffer.concat([iv, encrypted, authTag]);
     const evidenceHash = "0x" + crypto.createHash('sha256').update(evidenceText).digest('hex');
+
+    console.log("1.5 Uploading ciphertext to Arweave via Irys Devnet...");
+    const irys = new Irys({
+        network: "devnet",
+        token: "ethereum",
+        key: PRIVATE_KEY,
+        config: { providerUrl: RPC_URL }
+    });
+    const receipt = await irys.upload(ciphertext);
+    const arweaveTxId = receipt.id;
+    console.log(`Arweave upload complete! TxID: ${arweaveTxId}`);
 
     console.log("2. Transmitting key to Lit simulator...");
     const litResponse = await fetch(LIT_SIMULATOR_URL, {
@@ -62,7 +74,7 @@ async function main() {
         switchId,
         windowBlocks,
         graceBlocks,
-        "arweave_mock_tx_123", // Mock Arweave upload
+        arweaveTxId,
         evidenceHash,
         ethers.ZeroAddress,
         ethers.ZeroAddress,
