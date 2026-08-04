@@ -3,6 +3,8 @@ import { ethers } from 'ethers';
 import { getProvider, getContract } from '../contracts/VaultBomb';
 import { TriggerButton } from './TriggerButton';
 import { ViewSecret } from './ViewSecret';
+import { HeartbeatButton } from './HeartbeatButton';
+import { ClaimBountyButton } from './ClaimBountyButton';
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 const CONTRACT_CONFIGURED = ethers.isAddress(CONTRACT_ADDRESS) && CONTRACT_ADDRESS !== ethers.ZeroAddress;
@@ -19,10 +21,16 @@ type SwitchInfo = {
   status: SwitchStatus;
   bounty: string;
   bountyClaimed: boolean;
+  lastNonce: number;
   irysTxId?: string;
 };
 
-export function WatcherDashboard() {
+type WatcherDashboardProps = {
+  /** The currently connected wallet address, used to gate the HeartbeatButton to owners only. */
+  wallet: string;
+};
+
+export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
   const [switches, setSwitches] = useState<SwitchInfo[]>([]);
   const [watcherOffset, setWatcherOffset] = useState(0);
   const [watcherHasMore, setWatcherHasMore] = useState(false);
@@ -97,6 +105,7 @@ export function WatcherDashboard() {
       status,
       bounty: ethers.formatEther(info.bounty_amount),
       bountyClaimed: info.bounty_claimed,
+      lastNonce: Number(info.last_nonce),
       irysTxId,
     };
   };
@@ -152,6 +161,20 @@ export function WatcherDashboard() {
       sw.id === switchId 
         ? { ...sw, status: 'TRIGGERED' as SwitchStatus, irysTxId: arweaveTxId || sw.irysTxId } 
         : sw
+    ));
+  }, []);
+
+  // Callback for HeartbeatButton: refresh full switch data after a successful heartbeat
+  const handleHeartbeat = useCallback((switchId: string) => {
+    // Re-fetch this switch's info from chain so status and nonce are up-to-date
+    fetchSwitches();
+    console.log(`[Heartbeat] Switch ${switchId} reset. Re-fetching dashboard state.`);
+  }, []);
+
+  // Callback for ClaimBountyButton: mark bounty as claimed immediately in local state
+  const handleBountyClaimed = useCallback((switchId: string) => {
+    setSwitches(current => current.map(sw =>
+      sw.id === switchId ? { ...sw, bountyClaimed: true } : sw
     ));
   }, []);
 
@@ -233,10 +256,19 @@ export function WatcherDashboard() {
             }}>
                 {sw.status.replace('_', ' ')}
                 {sw.status === 'VULNERABLE' && <TriggerButton switchId={sw.id} onTriggered={handleSwitchTriggered} />}
+                {sw.status !== 'TRIGGERED' && sw.status !== 'PUBLISHED' && wallet.toLowerCase() === sw.owner.toLowerCase() && (
+                  <HeartbeatButton switchId={sw.id} onHeartbeat={handleHeartbeat} />
+                )}
             </div>
         </div>
         <div style={{ marginTop: '10px', fontSize: '0.9rem', color: '#8a8a9d' }}>Bounty Pool: {sw.bounty} ETH{sw.bountyClaimed ? ' (Claimed)' : ''}</div>
-        
+
+        {(sw.status === 'TRIGGERED' || sw.status === 'PUBLISHED') && !sw.bountyClaimed && (
+          <div style={{ marginTop: '10px' }}>
+            <ClaimBountyButton switchId={sw.id} onClaimed={handleBountyClaimed} />
+          </div>
+        )}
+
         {sw.status === 'TRIGGERED' && sw.irysTxId && (
             <ViewSecret switchId={sw.id} irysTxId={sw.irysTxId} />
         )}

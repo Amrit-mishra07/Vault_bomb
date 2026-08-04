@@ -69,7 +69,7 @@ function App() {
           </section>
         ) : (
           <section>
-            <WatcherDashboard />
+            <WatcherDashboard wallet={wallet} />
           </section>
         )}
       </main>

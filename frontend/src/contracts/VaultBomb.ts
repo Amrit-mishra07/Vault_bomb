@@ -57,3 +57,52 @@ export const registerSwitch = async (
   await tx.wait();
   return tx.hash;
 };
+
+/**
+ * Sends a heartbeat transaction to reset the countdown timer for a switch.
+ *
+ * The nonce must be strictly increasing per switch (replay protection).
+ * The caller is responsible for fetching the current last_nonce from
+ * getSwitchInfo and passing lastNonce + 1 here.
+ */
+export const heartbeat = async (switchId: string, nonce: number): Promise<string> => {
+  const provider = getProvider();
+  if (!(provider instanceof ethers.BrowserProvider)) throw new Error("Wallet required");
+  const signer = await provider.getSigner();
+  const contract = await getContract(signer);
+
+  const feeData = await provider.getFeeData();
+  const overrides: Record<string, bigint> = {};
+  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
+  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
+
+  const tx = await contract.heartbeat(switchId, nonce, overrides);
+  await tx.wait();
+  return tx.hash;
+};
+
+/**
+ * Claims the bounty for triggering a switch release.
+ *
+ * MOCK NOTE: In a real Lit Protocol integration the litProof would be a
+ * cryptographic signature produced by the Lit Action upon successful decryption.
+ * In the current mock setup (lit-simulator), this proof is a hex string that
+ * the simulator logs to its backend terminal. The caller must copy-paste it here.
+ * This behaviour MUST be replaced with a proper Lit SDK proof-retrieval call
+ * before any production deployment.
+ */
+export const claimBounty = async (switchId: string, litProof: string): Promise<string> => {
+  const provider = getProvider();
+  if (!(provider instanceof ethers.BrowserProvider)) throw new Error("Wallet required");
+  const signer = await provider.getSigner();
+  const contract = await getContract(signer);
+
+  const feeData = await provider.getFeeData();
+  const overrides: Record<string, bigint> = {};
+  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
+  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
+
+  const tx = await contract.claimBounty(switchId, litProof, overrides);
+  await tx.wait();
+  return tx.hash;
+};

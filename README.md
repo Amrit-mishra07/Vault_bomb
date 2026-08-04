@@ -164,6 +164,23 @@ node index.js
 ```
 *(Make sure to update the Lit API endpoints in `frontend/src/services/lit.ts` to point to `http://localhost:3000` if you do this).*
 
+#### Claiming a Bounty (Mock Setup — Developer Note)
+
+> ⚠️ **This section describes mock behaviour only.** In a real Lit Protocol deployment, the bounty proof would be generated automatically by the Lit Action and retrieved via the Lit SDK. The `window.prompt` flow described below **must** be replaced before any production deployment.
+
+When running with the mock Lit Simulator, the bounty-claim flow works as follows:
+
+1. A bounty hunter calls **"Execute Trigger (On-Chain)"** on a vulnerable switch via the Watcher Dashboard.
+2. The `lit-simulator` backend detects the on-chain `Triggered` event and logs a mock proof to its **terminal**:
+   ```
+   💰 BOUNTY PROOF FOR TRIGGERER 💰
+   Triggerer 0x... can now call claim_bounty() with this Lit Proof:
+   0x<hex-string>
+   ```
+3. The bounty hunter clicks the **"💰 Claim Bounty"** button on the dashboard.
+4. A prompt appears asking them to paste the hex proof from the terminal.
+5. The frontend calls `claimBounty(switchId, litProof)` on-chain with the pasted proof.
+
 ---
 
 ## 👥 Contributing
