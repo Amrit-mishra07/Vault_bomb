@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Publisher } from './components/Publisher';
 import { WatcherDashboard } from './components/WatcherDashboard';
+import { GlobalRateLimitProvider } from './contexts/GlobalRateLimitContext';
 import './App.css';
 
 function App() {
@@ -30,15 +31,18 @@ function App() {
 
   if (!wallet) {
     return (
-      <div className="landing-page">
-        <h1>Vault Bomb</h1>
-        <p>Unstoppable Dead-Man's Switch powered by Lit Protocol and Irys</p>
-        <button onClick={connectWallet} className="primary-btn">Connect Wallet</button>
-      </div>
+      <GlobalRateLimitProvider>
+        <div className="landing-page">
+          <h1>Vault Bomb</h1>
+          <p>Unstoppable Dead-Man's Switch powered by Lit Protocol and Irys</p>
+          <button onClick={connectWallet} className="primary-btn">Connect Wallet</button>
+        </div>
+      </GlobalRateLimitProvider>
     );
   }
 
   return (
+    <GlobalRateLimitProvider>
     <div className="app-container">
       <header className="app-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', gap: '1rem' }}>
         <h1 style={{ fontSize: '3rem', margin: 0 }}>Vault Bomb</h1>
@@ -74,6 +78,7 @@ function App() {
         )}
       </main>
     </div>
+    </GlobalRateLimitProvider>
   );
 }
 

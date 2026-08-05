@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ethers } from 'ethers';
 import { getProvider, getContract } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 // Decode Stylus raw revert bytes into a readable string
 function decodeRevertReason(error: any): string {
@@ -23,16 +24,25 @@ type TriggerButtonProps = {
 };
 
 export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
 
   const handleTrigger = async () => {
     setLoading(true);
     try {
       const provider = getProvider();
+      if (provider instanceof ethers.BrowserProvider) {
+        await import('../contracts/VaultBomb').then(m => m.ensureCorrectNetwork(provider));
+      }
       const signer = await provider.getSigner();
       const contract = await getContract(signer);
       
       // Pre-flight check: verify the contract will accept this trigger
+      if (isRateLimited) setRateLimitPending(true);
+      await acquireRateLimit();
+      setRateLimitPending(false);
+
       try {
         await contract.triggerRelease.staticCall(switchId);
       } catch (preflight: any) {
@@ -77,6 +87,7 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       alert("Trigger executed on-chain! Lit Protocol will now allow decryption.");
     } catch (e: any) {
       console.error(e);
+      reportError(e);
       const reason = decodeRevertReason(e);
       if (reason) {
         alert(`Trigger failed: ${reason}`);
@@ -85,13 +96,14 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       }
     } finally {
       setLoading(false);
+      setRateLimitPending(false);
     }
   };
 
   return (
     <div>
-      <button onClick={handleTrigger} disabled={loading} style={{ background: '#ff5252', padding: '5px 10px', fontSize: '0.8rem' }}>
-        {loading ? 'Triggering...' : 'Execute Trigger (On-Chain)'}
+      <button onClick={handleTrigger} disabled={loading || rateLimitPending} style={{ background: '#ff5252', padding: '5px 10px', fontSize: '0.8rem' }}>
+        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Triggering...' : 'Execute Trigger (On-Chain)'}
       </button>
     </div>
   );

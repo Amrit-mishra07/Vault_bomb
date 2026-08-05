@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import { getProvider, getContract } from '../contracts/VaultBomb';
 import { TriggerButton } from './TriggerButton';
 import { ViewSecret } from './ViewSecret';
 import { HeartbeatButton } from './HeartbeatButton';
 import { ClaimBountyButton } from './ClaimBountyButton';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 const CONTRACT_CONFIGURED = ethers.isAddress(CONTRACT_ADDRESS) && CONTRACT_ADDRESS !== ethers.ZeroAddress;
@@ -13,7 +14,82 @@ const SWITCH_PAGE_SIZE = 25;
 // ~2M blocks ≈ ~6 days on Arbitrum Sepolia (~250ms/block)
 const DEFAULT_SCAN_BLOCKS = 2_000_000;
 
-type SwitchStatus = 'ACTIVE' | 'GRACE_PERIOD' | 'VULNERABLE' | 'TRIGGERED' | 'PUBLISHED';
+/** Max concurrent RPC requests per batch to stay within public endpoint limits. */
+const RPC_BATCH_SIZE = 5;
+/** Delay (ms) between sequential batches to allow
+ * the RPC rate-limit bucket to refill. */
+const RPC_BATCH_DELAY_MS = 300;
+/** Maximum number of retries on a retriable RPC error (e.g. HTTP 429). */
+const RPC_MAX_RETRIES = 3;
+/** Initial backoff duration (ms); doubles on each consecutive retry. */
+const RPC_INITIAL_BACKOFF_MS = 1_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Wraps an async RPC call with exponential-backoff retry logic.
+ * Retries on HTTP 429 (rate limited) and generic network errors.
+ * Re-throws immediately for contract revert errors so callers can
+ * inspect the revert reason without waiting for retries.
+ * Accepts an optional onError callback to forward errors externally.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  onError?: (err: unknown) => void,
+  maxRetries = RPC_MAX_RETRIES,
+  initialBackoffMs = RPC_INITIAL_BACKOFF_MS,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      lastError = err;
+      onError?.(err);
+      const message = err instanceof Error ? err.message.toLowerCase() : '';
+      const isRevert =
+        (err as any)?.code === 'CALL_EXCEPTION' ||
+        (err as any)?.info?.error?.code === 3;
+      if (isRevert) throw err; // surface contract reverts immediately
+      const isRetriable =
+        message.includes('429') ||
+        message.includes('rate limit') ||
+        message.includes('too many requests') ||
+        message.includes('network error') ||
+        message.includes('failed to fetch');
+      if (!isRetriable || attempt === maxRetries) break;
+      const backoff = initialBackoffMs * 2 ** attempt;
+      console.warn(`[RPC] Attempt ${attempt + 1} failed, retrying in ${backoff}ms…`, message);
+      await sleep(backoff);
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Executes an array of async tasks in sequential batches of `batchSize`,
+ * inserting `delayMs` between each batch to reduce RPC burst traffic.
+ */
+async function batchedMap<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  batchSize = RPC_BATCH_SIZE,
+  delayMs = RPC_BATCH_DELAY_MS,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+    if (i + batchSize < items.length) {
+      await sleep(delayMs);
+    }
+  }
+  return results;
+}
+
+type SwitchStatus = 'ARMED' | 'GRACE_PERIOD' | 'VULNERABLE' | 'TRIGGERED' | 'PUBLISHED';
 
 type SwitchInfo = {
   id: string;
@@ -31,6 +107,24 @@ type WatcherDashboardProps = {
 };
 
 export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
+  // Keep a stable ref so async callbacks always call the latest acquireRateLimit
+  const acquireRef = useRef(acquireRateLimit);
+  acquireRef.current = acquireRateLimit;
+  const reportRef = useRef(reportError);
+  reportRef.current = reportError;
+
+  /**
+   * Wraps an async RPC call with both global rate-limiting and
+   * exponential-backoff retry logic, in that order.
+   *
+   * Rate limit is acquired first, then the call is attempted with retries.
+   * 429 errors are forwarded to reportError() to trigger the global cooldown.
+   */
+  async function rpcCall<T>(fn: () => Promise<T>): Promise<T> {
+    await acquireRef.current();
+    return withRetry(fn, (err) => reportRef.current(err));
+  }
   const [switches, setSwitches] = useState<SwitchInfo[]>([]);
   const [watcherOffset, setWatcherOffset] = useState(0);
   const [watcherHasMore, setWatcherHasMore] = useState(false);
@@ -51,30 +145,30 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
   };
 
   const loadSwitch = async (contract: ethers.Contract, id: string, blockNow: bigint): Promise<SwitchInfo> => {
-    const info = await contract.getSwitchInfo(id);
+    const info = await rpcCall(() => contract.getSwitchInfo(id));
     
-    let status: SwitchStatus = 'ACTIVE';
+    let status: SwitchStatus = 'ARMED';
     let irysTxId = '';
 
-    if (info.is_triggered) {
+    if (info[2]) { // info.is_triggered
       status = 'TRIGGERED';
       
       // Fetch the irysTxId emitted in the Triggered event using fromBlock to prevent RPC timeouts
       const triggeredFilter = contract.filters.Triggered(id);
-      const fromBlock = Number(info.last_heartbeat_block) || 0;
-      const triggeredEvents = await contract.queryFilter(triggeredFilter, fromBlock);
+      const fromBlock = Number(info[5]) || 0; // info.last_heartbeat_block
+      const triggeredEvents = await rpcCall(() => contract.queryFilter(triggeredFilter, fromBlock));
       if (triggeredEvents.length > 0) {
         irysTxId = (triggeredEvents[0] as any).args[3];
       }
     } else {
-      const windowBlocks = info.heartbeat_window_blocks;
-      const graceBlocks = info.grace_period_blocks;
-      const lastHeartbeat = info.last_heartbeat_block;
+      const windowBlocks = info[3]; // info.heartbeat_window_blocks
+      const graceBlocks = info[4]; // info.grace_period_blocks
+      const lastHeartbeat = info[5]; // info.last_heartbeat_block
       if (blockNow > lastHeartbeat + windowBlocks + graceBlocks) {
         // Frontend thinks it's vulnerable — verify with a staticCall to the contract
         // to avoid showing the trigger button when the contract would actually reject it
         try {
-          await contract.triggerRelease.staticCall(id);
+          await rpcCall(() => contract.triggerRelease.staticCall(id));
           status = 'VULNERABLE';
         } catch (err: any) {
           // Only fall back to GRACE_PERIOD if the contract specifically says the window
@@ -101,11 +195,11 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
 
     return {
       id,
-      owner: info.owner,
+      owner: info[0], // info.owner
       status,
-      bounty: ethers.formatEther(info.bounty_amount),
-      bountyClaimed: info.bounty_claimed,
-      lastNonce: Number(info.last_nonce),
+      bounty: ethers.formatEther(info[6]), // info.bounty_amount
+      bountyClaimed: info[7], // info.bounty_claimed
+      lastNonce: Number(info[8]), // info.last_nonce
       irysTxId,
     };
   };
@@ -126,24 +220,28 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
       // Arbitrum blocks are ~250ms, so scan last ~2M blocks (~6 days).
       // We must use the L2 block number for querying events!
       let fromBlock = Number(l2BlockNow) > DEFAULT_SCAN_BLOCKS ? Number(l2BlockNow) - DEFAULT_SCAN_BLOCKS : 0;
-      let events = await contract.queryFilter(filter, fromBlock);
+      let events = await rpcCall(() => contract.queryFilter(filter, fromBlock));
 
       // Fallback: if no events found and we didn't already scan from 0, retry from genesis
       if (events.length === 0 && fromBlock > 0) {
         console.log("No switches found in recent blocks, scanning from genesis...");
-        events = await contract.queryFilter(filter, 0);
+        events = await rpcCall(() => contract.queryFilter(filter, 0));
       }
 
       const ids = [...new Set(events.map(e => (e as any).args[0]))].reverse();
       const pageIds = ids.slice(offset, offset + SWITCH_PAGE_SIZE);
-      const loaded = (await Promise.all(pageIds.map(async id => {
+
+      // Process switch loads in rate-limited batches to avoid bursting the RPC endpoint.
+      // Each switch can make up to 3 RPC calls; batching 5 at a time with a 300ms delay
+      // keeps total concurrent requests well within public endpoint limits.
+      const loaded = (await batchedMap(pageIds, async id => {
         try {
           return await loadSwitch(contract, id, l1BlockNow);
         } catch (e) {
           console.error("Failed to load switch", id, e);
           return null;
         }
-      }))).filter(Boolean) as SwitchInfo[];
+      })).filter(Boolean) as SwitchInfo[];
       
       setSwitches(current => append ? [...current, ...loaded] : loaded);
       setWatcherOffset(offset + pageIds.length);
@@ -226,25 +324,32 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2>Watcher Dashboard</h2>
-          <div style={{ fontSize: '0.9rem', color: '#8a8a9d' }}>Current Block: {currentBlock.toString()}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            {isRateLimited && (
+              <span style={{ fontSize: '0.75rem', color: '#ffb300', background: 'rgba(255,179,0,0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(255,179,0,0.3)' }}>
+                ⏳ Hit Rate Limit
+              </span>
+            )}
+            <div style={{ fontSize: '0.9rem', color: '#8a8a9d' }}>Current Block: {currentBlock.toString()}</div>
+          </div>
       </div>
       
       {!CONTRACT_CONFIGURED ? <div className="panel">Set <code>VITE_CONTRACT_ADDRESS</code> to a deployed contract address.</div> : 
        switches.length === 0 && !isLoading ? <div className="panel">No switches active on this network.</div> : 
        switches.map(sw => <div key={sw.id} className="panel" style={{ 
           marginBottom: '1rem',
-          borderLeft: sw.status === 'ACTIVE' ? '4px solid #00e676' : 
+          borderLeft: sw.status === 'ARMED' ? '4px solid #00e676' : 
                       sw.status === 'GRACE_PERIOD' ? '4px solid #ffb300' : 
                       sw.status === 'VULNERABLE' ? '4px solid #ff1744' :
                       sw.status === 'TRIGGERED' ? '4px solid #ff5252' : '4px solid #b388ff' 
         }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <div style={{ paddingRight: '1rem' }}>
-                <strong>Owner:</strong> <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{sw.owner}</span><br />
+                <strong>Owner:</strong> <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{sw.owner}</span> {wallet.toLowerCase() === sw.owner.toLowerCase() && <span style={{ color: '#00e676', fontWeight: 'bold' }}>(You)</span>}<br />
                 <strong>Switch:</strong> <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{sw.id}</span>
             </div>
             <div style={{ 
-                color: sw.status === 'ACTIVE' ? '#00e676' : 
+                color: sw.status === 'ARMED' ? '#00e676' : 
                        sw.status === 'GRACE_PERIOD' ? '#ffb300' : 
                        sw.status === 'VULNERABLE' ? '#ff1744' :
                        sw.status === 'TRIGGERED' ? '#ff5252' : '#b388ff',
@@ -256,7 +361,7 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
             }}>
                 {sw.status.replace('_', ' ')}
                 {sw.status === 'VULNERABLE' && <TriggerButton switchId={sw.id} onTriggered={handleSwitchTriggered} />}
-                {sw.status !== 'TRIGGERED' && sw.status !== 'PUBLISHED' && wallet.toLowerCase() === sw.owner.toLowerCase() && (
+                {(sw.status === 'ARMED' || sw.status === 'GRACE_PERIOD') && wallet.toLowerCase() === sw.owner.toLowerCase() && (
                   <HeartbeatButton switchId={sw.id} onHeartbeat={handleHeartbeat} />
                 )}
             </div>

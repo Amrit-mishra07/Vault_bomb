@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { claimBounty } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 type ClaimBountyButtonProps = {
   switchId: string;
@@ -23,7 +24,9 @@ type ClaimBountyButtonProps = {
  * proof automatically before any mainnet or production deployment.
  */
 export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProps) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
   const [error, setError] = useState('');
 
   const handleClaim = async () => {
@@ -41,6 +44,10 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
       return;
     }
 
+    if (isRateLimited) setRateLimitPending(true);
+    await acquireRateLimit();
+    setRateLimitPending(false);
+
     setLoading(true);
     setError('');
     try {
@@ -48,9 +55,11 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
       onClaimed(switchId);
     } catch (err: any) {
       console.error(err);
+      reportError(err);
       setError(err?.reason ?? err?.message ?? 'Claim bounty transaction failed.');
     } finally {
       setLoading(false);
+      setRateLimitPending(false);
     }
   };
 
@@ -59,7 +68,7 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
       <button
         id={`claim-bounty-btn-${switchId}`}
         onClick={handleClaim}
-        disabled={loading}
+        disabled={loading || rateLimitPending}
         style={{
           background: '#b388ff',
           color: '#000',
@@ -67,12 +76,12 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
           fontSize: '0.8rem',
           border: 'none',
           borderRadius: '4px',
-          cursor: loading ? 'not-allowed' : 'pointer',
-          opacity: loading ? 0.7 : 1,
+          cursor: (loading || rateLimitPending) ? 'not-allowed' : 'pointer',
+          opacity: (loading || rateLimitPending) ? 0.7 : 1,
         }}
-        aria-busy={loading}
+        aria-busy={loading || rateLimitPending}
       >
-        {loading ? 'Claiming…' : '💰 Claim Bounty'}
+        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Claiming…' : '💰 Claim Bounty'}
       </button>
       {error && (
         <div style={{ color: '#ff5252', fontSize: '0.75rem', marginTop: '4px' }}>

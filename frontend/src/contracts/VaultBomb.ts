@@ -24,11 +24,43 @@ export const getContract = async (signerOrProvider: ethers.Signer | ethers.Provi
   return new ethers.Contract(CONTRACT_ADDRESS, ABI, signerOrProvider);
 };
 
+const ARBITRUM_SEPOLIA_CHAIN_ID = "0x66eee";
+const ARBITRUM_SEPOLIA_RPC_URL = "https://sepolia-rollup.arbitrum.io/rpc";
+
+export const ensureCorrectNetwork = async (provider: ethers.BrowserProvider) => {
+  const network = await provider.getNetwork();
+  if (network.chainId !== 421614n) {
+    try {
+      await (window as any).ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: ARBITRUM_SEPOLIA_CHAIN_ID }],
+      });
+    } catch (switchError: any) {
+      if (switchError.code === 4902) {
+        await (window as any).ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: ARBITRUM_SEPOLIA_CHAIN_ID,
+              chainName: 'Arbitrum Sepolia',
+              rpcUrls: [ARBITRUM_SEPOLIA_RPC_URL],
+              nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+              blockExplorerUrls: ['https://sepolia.arbiscan.io/'],
+            },
+          ],
+        });
+      } else {
+        throw switchError;
+      }
+    }
+  }
+};
+
 export const registerSwitch = async (
-  switchId: string, 
-  heartbeatBlocks: number, 
-  graceBlocks: number, 
-  irysTxId: string, 
+  switchId: string,
+  heartbeatBlocks: number,
+  graceBlocks: number,
+  irysTxId: string,
   evidenceHash: string,
   duressWallet: string,
   backupWallet: string,
@@ -36,9 +68,10 @@ export const registerSwitch = async (
 ) => {
   const provider = getProvider();
   if (!(provider instanceof ethers.BrowserProvider)) throw new Error("Wallet required");
+  await ensureCorrectNetwork(provider);
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
-  
+
   const feeData = await provider.getFeeData();
   const overrides: any = { value: ethers.parseEther(bountyValue) };
   if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
@@ -68,6 +101,7 @@ export const registerSwitch = async (
 export const heartbeat = async (switchId: string, nonce: number): Promise<string> => {
   const provider = getProvider();
   if (!(provider instanceof ethers.BrowserProvider)) throw new Error("Wallet required");
+  await ensureCorrectNetwork(provider);
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
 
@@ -94,6 +128,7 @@ export const heartbeat = async (switchId: string, nonce: number): Promise<string
 export const claimBounty = async (switchId: string, litProof: string): Promise<string> => {
   const provider = getProvider();
   if (!(provider instanceof ethers.BrowserProvider)) throw new Error("Wallet required");
+  await ensureCorrectNetwork(provider);
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
 

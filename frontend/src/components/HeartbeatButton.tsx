@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getProvider, getContract, heartbeat } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 type HeartbeatButtonProps = {
   switchId: string;
@@ -16,13 +17,19 @@ type HeartbeatButtonProps = {
  * regardless of any stale values held in local component state.
  */
 export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
   const [error, setError] = useState('');
 
   const handleHeartbeat = async () => {
     setLoading(true);
     setError('');
     try {
+      if (isRateLimited) setRateLimitPending(true);
+      await acquireRateLimit();
+      setRateLimitPending(false);
+
       // Fetch the latest nonce directly from the contract to guarantee correctness.
       // Using local state here would risk a stale value causing the tx to revert.
       const provider = getProvider();
@@ -34,9 +41,11 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
       onHeartbeat(switchId);
     } catch (err: any) {
       console.error(err);
+      reportError(err);
       setError(err?.reason ?? err?.message ?? 'Heartbeat transaction failed.');
     } finally {
       setLoading(false);
+      setRateLimitPending(false);
     }
   };
 
@@ -45,7 +54,7 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
       <button
         id={`heartbeat-btn-${switchId}`}
         onClick={handleHeartbeat}
-        disabled={loading}
+        disabled={loading || rateLimitPending}
         style={{
           background: '#00e676',
           color: '#000',
@@ -53,12 +62,12 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
           fontSize: '0.8rem',
           border: 'none',
           borderRadius: '4px',
-          cursor: loading ? 'not-allowed' : 'pointer',
-          opacity: loading ? 0.7 : 1,
+          cursor: (loading || rateLimitPending) ? 'not-allowed' : 'pointer',
+          opacity: (loading || rateLimitPending) ? 0.7 : 1,
         }}
-        aria-busy={loading}
+        aria-busy={loading || rateLimitPending}
       >
-        {loading ? 'Sending…' : '💓 Send Heartbeat'}
+        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Sending…' : '💓 Send Heartbeat'}
       </button>
       {error && (
         <div style={{ color: '#ff5252', fontSize: '0.75rem', marginTop: '4px' }}>

@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { decryptKey, buildACC } from '../services/lit';
 import { importKey, decryptText } from '../services/crypto';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 
 export function ViewSecret({ switchId, irysTxId }: { switchId: string, irysTxId: string }) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
 
@@ -15,6 +18,10 @@ export function ViewSecret({ switchId, irysTxId }: { switchId: string, irysTxId:
       return;
     }
     
+    if (isRateLimited) setRateLimitPending(true);
+    await acquireRateLimit();
+    setRateLimitPending(false);
+
     setLoading(true);
     setError('');
     
@@ -37,9 +44,11 @@ export function ViewSecret({ switchId, irysTxId }: { switchId: string, irysTxId:
       setSecret(plaintext);
     } catch (e: any) {
       console.error(e);
+      reportError(e);
       setError(e.message);
     } finally {
       setLoading(false);
+      setRateLimitPending(false);
     }
   };
 
@@ -54,8 +63,8 @@ export function ViewSecret({ switchId, irysTxId }: { switchId: string, irysTxId:
 
   return (
     <div style={{ marginTop: '10px' }}>
-      <button onClick={handleDecrypt} disabled={loading} style={{ background: '#00e676', color: '#000', padding: '5px 10px', fontSize: '0.8rem' }}>
-        {loading ? 'Fetching from Lit...' : 'Read Secret'}
+      <button onClick={handleDecrypt} disabled={loading || rateLimitPending} style={{ background: '#00e676', color: '#000', padding: '5px 10px', fontSize: '0.8rem' }}>
+        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Fetching from Lit...' : 'Read Secret'}
       </button>
       {error && <div style={{ color: '#ff5252', fontSize: '0.8rem', marginTop: '5px' }}>{error}</div>}
     </div>

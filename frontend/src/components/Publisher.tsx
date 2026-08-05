@@ -4,6 +4,7 @@ import { uploadToIrys } from '../services/irys';
 import { buildACC, encryptKey } from '../services/lit';
 import { ethers } from 'ethers';
 import { registerSwitch, getProvider } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 
@@ -110,12 +111,14 @@ function simplifyError(err: any): string {
 }
 
 export function Publisher() {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [secret, setSecret] = useState('');
   const [bounty, setBounty] = useState('0.000001');
   const [heartbeatBlocks, setHeartbeatBlocks] = useState('7200');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [isRegistered, setIsRegistered] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
 
   const handleArmBomb = async () => {
     setStatus('Generating encryption keys...');
@@ -125,6 +128,12 @@ export function Publisher() {
     try {
       if (!window.ethereum) throw new Error("Please install MetaMask!");
       
+      // Acquire a global rate-limit slot before hitting the chain / Lit Simulator.
+      // If the budget is exhausted this will block asynchronously for up to 60s.
+      if (isRateLimited) setRateLimitPending(true);
+      await acquireRateLimit();
+      setRateLimitPending(false);
+
       currentStep = 'Connecting MetaMask';
       await window.ethereum.request({ method: 'eth_requestAccounts' });
 
@@ -201,6 +210,8 @@ export function Publisher() {
       // Log the complete error object — full stack trace visible in DevTools (F12 → Console).
       console.error(`[Vault Bomb] Arm failed at step "${currentStep}":`, err);
 
+      reportError(err);
+      setRateLimitPending(false);
       setError(simplifyError(err));
       setStatus('');
     }
@@ -251,9 +262,9 @@ export function Publisher() {
           onClick={handleArmBomb}
           className="primary-btn"
           style={{ width: '100%', marginTop: '1rem' }}
-          disabled={!!status}
+          disabled={!!status || rateLimitPending}
         >
-          {status ? status : 'Arm Vault Bomb'}
+          {rateLimitPending ? 'Hit Rate Limit…' : status ? status : 'Arm Vault Bomb'}
         </button>
       )}
 
