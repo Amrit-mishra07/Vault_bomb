@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { claimBounty } from '../contracts/VaultBomb';
 import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
+import { decodeRevertReason } from '../contracts/decodeRevertReason';
+import { simplifyError } from '../utils/errors';
+
+// The lit-simulator produces a 65-byte mock ECDSA proof: 32 + 32 bytes of hash + 1 byte recovery id.
+// That is 130 hex characters + "0x" prefix = 132 characters total.
+const EXPECTED_PROOF_HEX_LENGTH = 132;
 
 type ClaimBountyButtonProps = {
   switchId: string;
@@ -40,7 +46,16 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
     if (!litProof) return; // User cancelled or left empty
 
     if (!litProof.startsWith('0x')) {
-      alert('Invalid proof: must start with 0x');
+      alert('Invalid proof: must start with 0x. Copy the full proof from the lit-simulator terminal.');
+      return;
+    }
+
+    if (litProof.length !== EXPECTED_PROOF_HEX_LENGTH) {
+      alert(
+        `Invalid proof length: got ${litProof.length} characters, expected ${EXPECTED_PROOF_HEX_LENGTH}.\n\n` +
+        `Make sure you copied the full proof from the lit-simulator terminal (it starts with 0x and is 132 characters long).\n\n` +
+        `Your wallet address is NOT the proof.`
+      );
       return;
     }
 
@@ -56,7 +71,10 @@ export function ClaimBountyButton({ switchId, onClaimed }: ClaimBountyButtonProp
     } catch (err: any) {
       console.error(err);
       reportError(err);
-      setError(err?.reason ?? err?.message ?? 'Claim bounty transaction failed.');
+      // Stylus contracts return raw ASCII revert bytes, not ABI-encoded Error(string),
+      // so err.reason is always null. Decode the raw data field instead.
+      const revertReason = decodeRevertReason(err);
+      setError(revertReason || simplifyError(err));
     } finally {
       setLoading(false);
       setRateLimitPending(false);

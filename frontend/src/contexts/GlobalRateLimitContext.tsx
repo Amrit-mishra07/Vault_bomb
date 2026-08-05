@@ -1,6 +1,10 @@
 import { createContext, useContext, useRef, useState, useCallback, type ReactNode } from 'react';
 
-const MAX_REQUESTS = 5;
+// Budget is sized for one full dashboard load:
+//   3 setup calls (getBlockNumber, eth_getBlockByNumber, queryFilter(SwitchRegistered))
+//   + up to 2 RPC calls per switch (getSwitchInfo + optional queryFilter(Triggered))
+// 25 / 60s gives headroom for a 10-switch dashboard load without queuing.
+const MAX_REQUESTS = 25;
 const WINDOW_MS = 60_000;
 
 type GlobalRateLimitContextValue = {

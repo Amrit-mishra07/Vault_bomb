@@ -56,6 +56,24 @@ export const ensureCorrectNetwork = async (provider: ethers.BrowserProvider) => 
   }
 };
 
+/**
+ * Safely fetches the current network gas price and adds a 50% buffer.
+ * By returning `gasPrice` (instead of maxFeePerGas), we force MetaMask to send a
+ * Legacy (Type 0) transaction. On Arbitrum, this entirely bypasses the strict
+ * EIP-1559 `max fee per gas less than block base fee` rejection errors and the
+ * missing `eth_maxPriorityFeePerGas` RPC endpoint issues.
+ */
+export const getRobustGasOverrides = async (provider: ethers.Provider): Promise<Record<string, bigint>> => {
+  try {
+    const rawGasPrice = await (provider as ethers.JsonRpcApiProvider).send("eth_gasPrice", []);
+    const gasPrice = BigInt(rawGasPrice);
+    return { gasPrice: (gasPrice * 150n) / 100n };
+  } catch (e) {
+    console.warn("Failed to fetch robust gas price, falling back to MetaMask defaults", e);
+    return {};
+  }
+};
+
 export const registerSwitch = async (
   switchId: string,
   heartbeatBlocks: number,
@@ -72,10 +90,20 @@ export const registerSwitch = async (
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
 
-  const feeData = await provider.getFeeData();
-  const overrides: any = { value: ethers.parseEther(bountyValue) };
-  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
-  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
+  const overrides: any = await getRobustGasOverrides(provider);
+  const value = ethers.parseEther(bountyValue);
+
+  // Manually estimate gas without gasPrice to avoid MetaMask/Arbitrum simulation errors
+  const estimatedGas = await contract.registerSwitch.estimateGas(
+    switchId,
+    heartbeatBlocks,
+    graceBlocks,
+    irysTxId,
+    evidenceHash,
+    duressWallet,
+    backupWallet,
+    { value }
+  );
 
   const tx = await contract.registerSwitch(
     switchId,
@@ -85,7 +113,11 @@ export const registerSwitch = async (
     evidenceHash,
     duressWallet,
     backupWallet,
-    overrides
+    {
+      ...overrides,
+      value,
+      gasLimit: (estimatedGas * 120n) / 100n
+    }
   );
   await tx.wait();
   return tx.hash;
@@ -105,12 +137,13 @@ export const heartbeat = async (switchId: string, nonce: number): Promise<string
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
 
-  const feeData = await provider.getFeeData();
-  const overrides: Record<string, bigint> = {};
-  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
-  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
-
-  const tx = await contract.heartbeat(switchId, nonce, overrides);
+  const overrides = await getRobustGasOverrides(provider);
+  
+  const estimatedGas = await contract.heartbeat.estimateGas(switchId, nonce);
+  const tx = await contract.heartbeat(switchId, nonce, {
+    ...overrides,
+    gasLimit: (estimatedGas * 120n) / 100n
+  });
   await tx.wait();
   return tx.hash;
 };
@@ -132,12 +165,13 @@ export const claimBounty = async (switchId: string, litProof: string): Promise<s
   const signer = await provider.getSigner();
   const contract = await getContract(signer);
 
-  const feeData = await provider.getFeeData();
-  const overrides: Record<string, bigint> = {};
-  if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
-  if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
-
-  const tx = await contract.claimBounty(switchId, litProof, overrides);
+  const overrides = await getRobustGasOverrides(provider);
+  
+  const estimatedGas = await contract.claimBounty.estimateGas(switchId, litProof);
+  const tx = await contract.claimBounty(switchId, litProof, {
+    ...overrides,
+    gasLimit: (estimatedGas * 120n) / 100n
+  });
   await tx.wait();
   return tx.hash;
 };

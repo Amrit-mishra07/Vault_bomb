@@ -11,8 +11,9 @@ const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 const CONTRACT_CONFIGURED = ethers.isAddress(CONTRACT_ADDRESS) && CONTRACT_ADDRESS !== ethers.ZeroAddress;
 const SWITCH_PAGE_SIZE = 25;
 
-// ~2M blocks ≈ ~6 days on Arbitrum Sepolia (~250ms/block)
-const DEFAULT_SCAN_BLOCKS = 2_000_000;
+// ~100k blocks ≈ ~6 hours on Arbitrum Sepolia (~250ms/block)
+// We reduce this from 2M to 100k to prevent "block range too large" and 429 rate limit errors on public RPCs.
+const DEFAULT_SCAN_BLOCKS = 100_000;
 
 /** Max concurrent RPC requests per batch to stay within public endpoint limits. */
 const RPC_BATCH_SIZE = 5;
@@ -131,19 +132,6 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
   const [currentBlock, setCurrentBlock] = useState(0n);
   const [isLoading, setIsLoading] = useState(false);
 
-  const fetchCurrentBlock = async () => {
-    try {
-      const provider = getProvider();
-      // Arbitrum EVM block.number returns the L1 block number.
-      // provider.getBlockNumber() returns the L2 block number.
-      // We must fetch the L1 block number to match the contract's block math!
-      const rawBlock = await provider.send("eth_getBlockByNumber", ["latest", false]);
-      setCurrentBlock(BigInt(rawBlock.l1BlockNumber));
-    } catch (e) {
-      console.error("Failed to fetch block number", e);
-    }
-  };
-
   const loadSwitch = async (contract: ethers.Contract, id: string, blockNow: bigint): Promise<SwitchInfo> => {
     const info = await rpcCall(() => contract.getSwitchInfo(id));
     
@@ -153,7 +141,7 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
     if (info[2]) { // info.is_triggered
       status = 'TRIGGERED';
       
-      // Fetch the irysTxId emitted in the Triggered event using fromBlock to prevent RPC timeouts
+      // Fetch the irysTxId emitted in the Triggered event
       const triggeredFilter = contract.filters.Triggered(id);
       const fromBlock = Number(info[5]) || 0; // info.last_heartbeat_block
       const triggeredEvents = await rpcCall(() => contract.queryFilter(triggeredFilter, fromBlock));
@@ -164,30 +152,9 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
       const windowBlocks = info[3]; // info.heartbeat_window_blocks
       const graceBlocks = info[4]; // info.grace_period_blocks
       const lastHeartbeat = info[5]; // info.last_heartbeat_block
+      // Trust the frontend block math; the staticCall pre-flight is deferred to TriggerButton click.
       if (blockNow > lastHeartbeat + windowBlocks + graceBlocks) {
-        // Frontend thinks it's vulnerable — verify with a staticCall to the contract
-        // to avoid showing the trigger button when the contract would actually reject it
-        try {
-          await rpcCall(() => contract.triggerRelease.staticCall(id));
-          status = 'VULNERABLE';
-        } catch (err: any) {
-          // Only fall back to GRACE_PERIOD if the contract specifically says the window
-          // hasn't expired. Any other error (network, provider, etc.) should trust the
-          // frontend's block-based math and show VULNERABLE.
-          const data = err?.data ?? err?.error?.data ?? err?.info?.error?.data;
-          let revertReason = '';
-          if (typeof data === 'string' && data.startsWith('0x') && data.length > 2) {
-            try {
-              revertReason = new TextDecoder('utf-8', { fatal: true }).decode(ethers.getBytes(data));
-            } catch { /* not valid UTF-8 */ }
-          }
-          if (revertReason === 'Window not expired') {
-            status = 'GRACE_PERIOD';
-          } else {
-            // Network error, provider issue, or unknown revert — trust frontend math
-            status = 'VULNERABLE';
-          }
-        }
+        status = 'VULNERABLE';
       } else if (blockNow > lastHeartbeat + windowBlocks) {
         status = 'GRACE_PERIOD';
       }
@@ -209,24 +176,19 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
     setIsLoading(true);
     try {
       const provider = getProvider();
-      const l2BlockNow = BigInt(await provider.getBlockNumber());
-      const rawBlock = await provider.send("eth_getBlockByNumber", ["latest", false]);
+      // Both block fetches go through rpcCall so they consume rate-limit tokens correctly.
+      const l2BlockNow = BigInt(await rpcCall(() => provider.getBlockNumber()));
+      const rawBlock = await rpcCall(() => provider.send("eth_getBlockByNumber", ["latest", false]));
       const l1BlockNow = BigInt(rawBlock.l1BlockNumber);
       setCurrentBlock(l1BlockNow);
 
       const contract = await getContract(provider);
       const filter = contract.filters.SwitchRegistered();
 
-      // Arbitrum blocks are ~250ms, so scan last ~2M blocks (~6 days).
+      // Arbitrum blocks are ~250ms, so scan last 10k blocks (~41 minutes).
       // We must use the L2 block number for querying events!
-      let fromBlock = Number(l2BlockNow) > DEFAULT_SCAN_BLOCKS ? Number(l2BlockNow) - DEFAULT_SCAN_BLOCKS : 0;
-      let events = await rpcCall(() => contract.queryFilter(filter, fromBlock));
-
-      // Fallback: if no events found and we didn't already scan from 0, retry from genesis
-      if (events.length === 0 && fromBlock > 0) {
-        console.log("No switches found in recent blocks, scanning from genesis...");
-        events = await rpcCall(() => contract.queryFilter(filter, 0));
-      }
+      const fromBlock = Number(l2BlockNow) > DEFAULT_SCAN_BLOCKS ? Number(l2BlockNow) - DEFAULT_SCAN_BLOCKS : 0;
+      const events = await rpcCall(() => contract.queryFilter(filter, fromBlock));
 
       const ids = [...new Set(events.map(e => (e as any).args[0]))].reverse();
       const pageIds = ids.slice(offset, offset + SWITCH_PAGE_SIZE);
@@ -277,45 +239,14 @@ export function WatcherDashboard({ wallet }: WatcherDashboardProps) {
   }, []);
 
   useEffect(() => {
-    fetchCurrentBlock();
     fetchSwitches();
     
-    // Poll every 30s to detect status transitions (ACTIVE → GRACE_PERIOD → VULNERABLE)
-    // These transitions don't emit on-chain events, so polling is required.
+    // Poll every 30s to detect status transitions and new switches.
+    // contract.on() is intentionally avoided — it polls eth_getLogs every 4s and
+    // rapidly burns through the public RPC rate limit budget.
     const pollInterval = CONTRACT_CONFIGURED
       ? setInterval(() => { fetchSwitches(); }, 30_000)
       : undefined;
-
-    if (CONTRACT_CONFIGURED) {
-       let contract: ethers.Contract;
-       const setupListener = async () => {
-           contract = await getContract(getProvider());
-
-           // Listen for Triggered events to auto-update switch status
-           contract.on("Triggered", onTriggered);
-           contract.on("PlaintextPublished", onPublished);
-       }
-
-       const onTriggered = (switchId: string, _journalist: string, _triggerer: string, arweaveTxId: string) => {
-         setSwitches(current => current.map(sw => 
-           sw.id === switchId 
-             ? { ...sw, status: 'TRIGGERED', irysTxId: arweaveTxId } 
-             : sw
-         ));
-       };
-
-       const onPublished = (switchId: string) => {
-          setSwitches(current => current.map(sw => sw.id === switchId ? { ...sw, status: 'PUBLISHED' } : sw));
-       };
-       setupListener();
-       return () => {
-         if (pollInterval) clearInterval(pollInterval);
-         if (contract) {
-           contract.off("Triggered", onTriggered);
-           contract.off("PlaintextPublished", onPublished);
-         }
-       };
-    }
 
     return () => { if (pollInterval) clearInterval(pollInterval); };
   }, []);
