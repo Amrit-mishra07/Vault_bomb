@@ -17,9 +17,13 @@
     "@irys/web-upload": "^0.0.15",
     "@irys/web-upload-ethereum": "^0.0.16",
     "@irys/web-upload-ethereum-ethers-v6": "^0.0.16",
+    "@tailwindcss/vite": "^4.3.3",
     "ethers": "^6.17.0",
+    "framer-motion": "^13.0.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

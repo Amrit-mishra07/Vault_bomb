@@ -11,7 +11,19 @@ const ABI = [
   "event PlaintextPublished(bytes32 indexed switchId, string arweaveTxId)"
 ];
 
-const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
+export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
+
+export interface SwitchInfoResult {
+  owner: string;
+  isActive: boolean;
+  isTriggered: boolean;
+  heartbeatWindowBlocks: bigint;
+  gracePeriodBlocks: bigint;
+  lastHeartbeatBlock: bigint;
+  bountyAmount: bigint;
+  bountyClaimed: boolean;
+  lastNonce: bigint;
+}
 
 export const getProvider = () => {
   if (window.ethereum) {

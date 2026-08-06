@@ -22,14 +22,13 @@ export const importKey = async (keyStr: string): Promise<CryptoKey> => {
   );
 };
 
-export const encryptText = async (text: string, key: CryptoKey): Promise<{ ciphertext: string, iv: string }> => {
+export const encryptData = async (data: Uint8Array, key: CryptoKey): Promise<{ ciphertext: string, iv: string }> => {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const encodedText = new TextEncoder().encode(text);
   
   const ciphertextBuffer = await window.crypto.subtle.encrypt(
     { name: "AES-GCM", iv: iv },
     key,
-    encodedText
+    data.buffer as ArrayBuffer
   );
   
   const ciphertext = btoa(String.fromCharCode(...new Uint8Array(ciphertextBuffer)));
@@ -38,7 +37,7 @@ export const encryptText = async (text: string, key: CryptoKey): Promise<{ ciphe
   return { ciphertext, iv: ivStr };
 };
 
-export const decryptText = async (ciphertextStr: string, ivStr: string, key: CryptoKey): Promise<string> => {
+export const decryptData = async (ciphertextStr: string, ivStr: string, key: CryptoKey): Promise<Uint8Array> => {
   const ciphertext = Uint8Array.from(atob(ciphertextStr), c => c.charCodeAt(0)).buffer;
   const iv = Uint8Array.from(atob(ivStr), c => c.charCodeAt(0));
   
@@ -48,5 +47,15 @@ export const decryptText = async (ciphertextStr: string, ivStr: string, key: Cry
     ciphertext
   );
   
+  return new Uint8Array(decryptedData);
+};
+
+export const encryptText = async (text: string, key: CryptoKey): Promise<{ ciphertext: string, iv: string }> => {
+  const encodedText = new TextEncoder().encode(text);
+  return encryptData(encodedText, key);
+};
+
+export const decryptText = async (ciphertextStr: string, ivStr: string, key: CryptoKey): Promise<string> => {
+  const decryptedData = await decryptData(ciphertextStr, ivStr, key);
   return new TextDecoder().decode(decryptedData);
 };

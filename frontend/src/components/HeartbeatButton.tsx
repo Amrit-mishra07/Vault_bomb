@@ -4,18 +4,9 @@ import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 type HeartbeatButtonProps = {
   switchId: string;
-  /** Called after the heartbeat tx is confirmed so the parent can refresh state. */
   onHeartbeat: (switchId: string) => void;
 };
 
-/**
- * Allows the switch owner to reset the countdown timer by sending a heartbeat
- * transaction on-chain.
- *
- * The nonce is fetched from the contract immediately before submission so that
- * the contract's state is always the source of truth for replay protection,
- * regardless of any stale values held in local component state.
- */
 export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps) {
   const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
@@ -30,8 +21,6 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
       await acquireRateLimit();
       setRateLimitPending(false);
 
-      // Fetch the latest nonce directly from the contract to guarantee correctness.
-      // Using local state here would risk a stale value causing the tx to revert.
       const provider = getProvider();
       const contract = await getContract(provider);
       const info = await contract.getSwitchInfo(switchId);
@@ -42,7 +31,7 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
     } catch (err: any) {
       console.error(err);
       reportError(err);
-      setError(err?.reason ?? err?.message ?? 'Heartbeat transaction failed.');
+      setError(err?.reason ?? err?.message ?? 'Heartbeat failed.');
     } finally {
       setLoading(false);
       setRateLimitPending(false);
@@ -50,30 +39,15 @@ export function HeartbeatButton({ switchId, onHeartbeat }: HeartbeatButtonProps)
   };
 
   return (
-    <div>
+    <div className="flex flex-col items-end">
       <button
-        id={`heartbeat-btn-${switchId}`}
         onClick={handleHeartbeat}
         disabled={loading || rateLimitPending}
-        style={{
-          background: '#00e676',
-          color: '#000',
-          padding: '5px 12px',
-          fontSize: '0.8rem',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: (loading || rateLimitPending) ? 'not-allowed' : 'pointer',
-          opacity: (loading || rateLimitPending) ? 0.7 : 1,
-        }}
-        aria-busy={loading || rateLimitPending}
+        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs tracking-widest uppercase border border-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Sending…' : '💓 Send Heartbeat'}
+        {rateLimitPending ? 'Rate Limit...' : loading ? 'Sending...' : 'Send Heartbeat'}
       </button>
-      {error && (
-        <div style={{ color: '#ff5252', fontSize: '0.75rem', marginTop: '4px' }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="text-red-500 text-xs mt-2">{error}</div>}
     </div>
   );
 }

@@ -43,21 +43,40 @@ To set up the project locally, follow these steps:
    cd Vault_bomb
    ```
 3. **Install dependencies:**
-   > **TODO:** Add specific dependency installation commands for Vault_bomb (e.g., `npm install`, `pip install -r requirements.txt`, etc.).
    ```bash
-   # <TODO: Add command>
+   # Install backend dependencies
+   cd lit-simulator
+   npm install
+
+   # Install frontend dependencies
+   cd ../frontend
+   npm install
    ```
 4. **Set up the environment:**
-   > **TODO:** Detail any `.env` setup or API keys required.
-5. **Run the project:**
-   > **TODO:** Add the command to run the project locally (e.g., `npm start`, `python main.py`).
-   ```bash
-   # <TODO: Add command>
+   Create a `.env` file in the `frontend/` directory with your deployed contract address and the local simulator URL:
+   ```env
+   VITE_CONTRACT_ADDRESS=0x0c92d14eea513a216ab1559deac8e0ce8fabc3b9
+   VITE_LIT_SIMULATOR_URL=http://localhost:3000
    ```
-6. **Run tests:**
-   > **TODO:** Add the command to run the test suite.
+5. **Run the project:**
+   You will need to run the Lit Simulator (backend) and the React application (frontend) in two separate terminal windows.
+   
+   **Terminal 1 (Backend):**
    ```bash
-   # <TODO: Add command>
+   cd lit-simulator
+   npm start
+   ```
+   
+   **Terminal 2 (Frontend):**
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+   
+6. **Run tests:**
+   ```bash
+   cd frontend
+   npm run build
    ```
 
 ## Branching Strategy

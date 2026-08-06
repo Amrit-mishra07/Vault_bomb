@@ -5,7 +5,6 @@ import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 import { decodeRevertReason } from '../contracts/decodeRevertReason';
 import { simplifyError } from '../utils/errors';
 
-
 type TriggerButtonProps = {
   switchId: string;
   onTriggered?: (switchId: string, arweaveTxId?: string) => void;
@@ -26,7 +25,6 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       const signer = await provider.getSigner();
       const contract = await getContract(signer);
       
-      // Pre-flight check: verify the contract will accept this trigger
       if (isRateLimited) setRateLimitPending(true);
       await acquireRateLimit();
       setRateLimitPending(false);
@@ -36,19 +34,18 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       } catch (preflight: any) {
         const reason = decodeRevertReason(preflight);
         if (reason === 'Window not expired') {
-          alert("The heartbeat window hasn't fully expired yet. Please wait a bit longer and try again.");
+          alert("The heartbeat window hasn't fully expired yet.");
         } else if (reason === 'Already triggered') {
           alert("This switch has already been triggered.");
         } else if (reason) {
           alert(`Cannot trigger: ${reason}`);
         } else {
-          alert("Cannot trigger this switch right now. The window may not have expired yet.");
+          alert("Cannot trigger this switch right now.");
         }
         return;
       }
 
       const overrides = await getRobustGasOverrides(provider);
-      
       const estimatedGas = await contract.triggerRelease.estimateGas(switchId);
       const tx = await contract.triggerRelease(switchId, {
         ...overrides,
@@ -56,7 +53,6 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       });
       const receipt = await tx.wait();
 
-      // Extract the arweaveTxId from the Triggered event in the receipt
       let arweaveTxId: string | undefined;
       if (receipt && receipt.logs) {
         const iface = contract.interface;
@@ -64,14 +60,13 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
           try {
             const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
             if (parsed && parsed.name === 'Triggered') {
-              arweaveTxId = parsed.args[3]; // arweaveTxId is the 4th arg
+              arweaveTxId = parsed.args[3];
               break;
             }
           } catch { /* not our event */ }
         }
       }
 
-      // Notify parent immediately so dashboard updates without waiting for event polling
       onTriggered?.(switchId, arweaveTxId);
       
       try {
@@ -89,17 +84,12 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
       } catch (e) {
         console.error("Failed to notify Lit Simulator:", e);
       }
-
-      alert("Trigger executed on-chain! Lit Protocol will now allow decryption.");
     } catch (e: any) {
       console.error(e);
       reportError(e);
       const reason = decodeRevertReason(e);
-      if (reason) {
-        alert(`Trigger failed: ${reason}`);
-      } else {
-        alert(`Failed to trigger: ${simplifyError(e)}`);
-      }
+      if (reason) alert(`Trigger failed: ${reason}`);
+      else alert(`Failed to trigger: ${simplifyError(e)}`);
     } finally {
       setLoading(false);
       setRateLimitPending(false);
@@ -107,10 +97,12 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
   };
 
   return (
-    <div>
-      <button onClick={handleTrigger} disabled={loading || rateLimitPending} style={{ background: '#ff5252', padding: '5px 10px', fontSize: '0.8rem' }}>
-        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Triggering...' : 'Execute Trigger (On-Chain)'}
-      </button>
-    </div>
+    <button 
+      onClick={handleTrigger} 
+      disabled={loading || rateLimitPending} 
+      className="px-4 py-2 bg-accent hover:bg-accent-hover text-white font-medium text-xs tracking-widest uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {rateLimitPending ? 'Rate Limit...' : loading ? 'Triggering...' : 'Trigger Release'}
+    </button>
   );
 }

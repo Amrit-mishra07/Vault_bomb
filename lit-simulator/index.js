@@ -92,6 +92,17 @@ app.get("/get-key/:switchId", (req, res) => {
     res.json({ aesKey: data.aesKey });
 });
 
+// Mock endpoint to fetch the bounty proof without needing to copy-paste from terminal
+app.get("/get-proof/:switchId", (req, res) => {
+    const switchId = req.params.switchId;
+    if (!switchId || !ethers.isHexString(switchId, 32)) {
+        return res.status(400).json({ error: "Invalid switchId" });
+    }
+    const hash = crypto.createHash("sha256").update("PUBLISHED" + switchId).digest("hex");
+    const publicationProof = "0x" + hash + hash + "00";
+    res.json({ proof: publicationProof });
+});
+
 // ---------------------------------------------------------
 // Manual Trigger Endpoint (Avoids RPC polling rate limits)
 // ---------------------------------------------------------
