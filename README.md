@@ -188,3 +188,9 @@ We welcome pull requests from developers, cryptographers, and privacy advocates.
 
 ## 📄 License
 This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details. Built for the greater good.
+### 3. Deploy the Smart Contract
+```bash
+cd contracts
+./deploy.sh
+```
+ 
