@@ -1,151 +1,193 @@
 <div align="center">
+  <img src="https://raw.githubusercontent.com/Amrit-mishra07/Vault_bomb/main/frontend/public/vite.svg" width="120" alt="Vault Bomb Logo" />
   <h1>💣 Vault_bomb</h1>
-  <p><strong>An Unstoppable Dead-Man's Switch for Whistleblowers, RTI Activists & Investigative Journalists</strong></p>
+  <p><strong>The Unstoppable Dead-Man's Switch for Whistleblowers, Activists & Investigative Journalists</strong></p>
   
   [![Arbitrum Stylus](https://img.shields.io/badge/Arbitrum-Stylus-blue.svg)](https://arbitrum.io/stylus)
   [![Lit Protocol](https://img.shields.io/badge/Lit-Protocol-orange.svg)](https://litprotocol.com/)
-  [![Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
+  [![Irys](https://img.shields.io/badge/Irys-Storage-black.svg)](https://irys.xyz/)
+  [![Rust](https://img.shields.io/badge/Language-Rust-ea704b.svg)](https://www.rust-lang.org/)
+  [![React](https://img.shields.io/badge/Frontend-React-61dafb.svg)](https://react.dev/)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-  <p><em>Built for the Arbitrum Builder Pods Hackathon</em></p>
+  <p><em>Engineered for the Arbitrum Builder Pods Hackathon</em></p>
+
+  <h3>
+    <a href="https://vault-bomb.vercel.app">🔴 View Live Production App</a>
+    <span> | </span>
+    <a href="#-developer-guide--local-setup">💻 Developer Documentation</a>
+  </h3>
 </div>
 
+<br/>
+
+## 📖 The Problem: Information Suppression
+
+Information suppression relies on a single fundamental vulnerability: coercing individuals. If an authoritarian regime or malicious entity wants to stop the release of highly classified information, they target the whistleblower or journalist holding it. 
+
+Traditional dead-man's switches attempt to solve this by using timed emails or centralized servers, but these are inherently fragile. A server can be seized, a cloud provider (like AWS) can be subpoenaed, and centralized databases can be hacked.
+
+**Vault_bomb removes the individual—and any centralized server—as the point of failure.** 
+
+By leveraging permanent decentralized storage, decentralized key management, and immutable on-chain smart contracts, Vault_bomb guarantees that once evidence is locked in, **no human, no corporation, and no government can stop the release if the journalist is silenced.** It provides a credible, mathematically unbreakable digital deterrent.
+
 ---
 
-## 📖 Overview
+## ✨ Core Architecture & Technology Deep Dive
 
-A journalist or RTI activist pre-commits encrypted evidence to a smart contract. A single registered wallet can arm any number of independently identified switches. If a switch misses its **heartbeat transaction** within its set window — because its owner has been detained, disappeared, or had their device seized — the system automatically releases that switch's evidence.
+Vault_bomb solves the paradox of decentralized secrets: keeping private data (the decryption key) off-chain, while using verifiable, immutable on-chain execution to gate its release.
 
-**No human or organization, including the platform itself, can stop the release once conditions are met.**
+### 1. Arbitrum Stylus (The Cryptographic Anchor)
+Written entirely in highly optimized **Rust**, our smart contract is compiled to WebAssembly (WASM) and deployed on Arbitrum. 
+- **Why Stylus?** Stylus allows for orders-of-magnitude cheaper compute and memory safety compared to Solidity. This allows us to manage complex mapping arrays, bounty pools, and strict heartbeat block-timing checks at a fraction of standard EVM gas costs.
+- **L1 Block Timing:** Heartbeat windows are calculated strictly using L1 Ethereum Block Numbers inherited by Arbitrum. This entirely prevents fast-block L2 sequencer manipulation or timestamp spoofing.
 
-### Why Blockchain-Only?
-Any centralized platform can be pressured, subpoenaed, hacked, or quietly bribed into suppressing the release. The core value proposition of Vault_bomb is that **smart contract execution is immutable and unstoppable**. RTI activists and journalists in authoritarian environments have actually died for the information they were sitting on. This is a credible, unbreakable deterrent.
+### 2. Irys / Arweave (Permanent Evidence Storage)
+Evidence (PDFs, videos, datasets) is symmetrically encrypted locally in the browser and uploaded to the Irys network.
+- **Pay Once, Store Forever:** Irys writes data permanently to Arweave. There are no monthly hosting bills to pay. Once the encrypted ciphertext is uploaded, it cannot be deleted by any entity, ensuring the evidence survives indefinitely.
+
+### 3. Lit Protocol (Decentralized Key Custody)
+The AES decryption key used to lock the evidence is secured by Lit Protocol's MPC (Multi-Party Computation) network.
+- **No Single Point of Failure:** The key is broken into threshold-distributed shares across independent node operators.
+- **Access Control Conditions (ACC):** The key is locked behind a strict cryptographic rule: *"Only combine shares and release the decryption key if `is_triggered` == true on the Arbitrum Stylus contract."*
+
+### 4. Permissionless MEV Bounties (The Trigger)
+If a journalist's heartbeat lapses (and the grace period expires), the switch becomes "Vulnerable." Instead of relying on a centralized cron-job to trigger the release, Vault_bomb attaches an on-chain **ETH Bounty** to the switch.
+- **Searcher Incentives:** Anyone (or any automated MEV bot) can call `triggerRelease()`. If the conditions are met, the contract pays out the bounty. This financially guarantees that the switch will be detonated by the decentralized free market.
 
 ---
 
-## 🏗️ Architecture Stack
-
-Vault_bomb solves the problem of keeping private data (the decryption key) off-chain while using on-chain execution guarantees to gate its release. 
+## ⚙️ The Application Lifecycle
 
 ```mermaid
 sequenceDiagram
     participant J as Journalist
-    participant A as Arweave
+    participant Irys as Irys (Arweave)
     participant Lit as Lit Protocol (MPC)
-    participant S as Arbitrum Stylus Contract
-    participant B as Bounty Hunter (MEV Bot)
-    participant W as Watcher Dashboard
+    participant S as Arbitrum Stylus (Rust)
+    participant B as Bounty Hunter (MEV)
     
     %% Setup Phase
     rect rgb(30, 30, 30)
-    note right of J: 1. Setup Phase
-    J->>A: Upload ciphertext
-    A-->>J: Return permanent TxID
-    J->>Lit: Encrypt AES Key with ACC: "Stylus TRIGGERED == true"
-    Lit-->>J: Return success (custody acknowledgment)
-    J->>S: registerSwitch(TxID) + Deposit Bounty (ETH)
+    note right of J: 1. Setup & Arming
+    J->>Irys: Upload Encrypted Evidence
+    Irys-->>J: Return permanent TxID
+    J->>Lit: Secure AES Key with ACC: "Stylus TRIGGERED == true"
+    J->>S: registerSwitch() with heartbeat window
     end
     
     %% Normal Operation
     rect rgb(20, 40, 20)
     note right of J: 2. Normal Operation
-    loop Every N Blocks
-        J->>S: heartbeat()
-        S-->>S: Reset timer (last_heartbeat = block.number)
+    loop Every Window
+        J->>S: heartbeat() -> Resets countdown timer
     end
     end
     
     %% Trigger Phase
     rect rgb(50, 20, 20)
-    note right of J: 3. Trigger & Release (Detention/Silence)
-    W->>S: (Public continuously monitors state)
-    B->>S: triggerRelease() (window expired)
-    S->>S: Set state to TRIGGERED
-    B->>Lit: Execute Lit Action (ACC Unlocked!)
-    Lit->>A: Fetch ciphertext using TxID
-    Lit->>Lit: Decrypt using MPC Key Shares
-    Lit->>A: Publish Plaintext Evidence (Arweave)
-    Lit->>Lit: Publish to Farcaster / Email
-    Lit-->>B: Return signed publication proof
-    B->>S: claimBounty(proof) -> Receives ETH
+    note right of J: 3. Detonation (Silence Detected)
+    B->>S: triggerRelease() (After Grace Period)
+    S->>S: State -> TRIGGERED, Pays Bounty
+    B->>Lit: Execute decryption request
+    Lit->>S: Verifies on-chain condition is met
+    Lit->>Irys: Fetches Ciphertext
+    Lit->>Lit: Decrypts & Multi-publishes Plaintext
     end
 ```
 
-1. **Arbitrum Stylus Contract (Rust):** The anchor of verifiability. Holds the trigger logic, heartbeat state, and the bounty pool. Written in Rust for heavily optimized WASM execution.
-2. **Lit Protocol (Key Custody & Publishing):** Decentralized MPC network. The decryption key is threshold-distributed across independent node operators. A Lit Action decrypts the payload and publishes it across multiple channels simultaneously once the Access Control Condition (ACC) is met.
-3. **Permissionless Bountied Trigger:** Anyone (e.g., MEV bots) can call `triggerRelease()` once a window expires. They are paid a bounty *only* after providing cryptographic proof that the Lit Action successfully published the evidence.
-4. **Watcher Dashboard:** A read-only UI mirrored on IPFS that allows the public and press orgs to monitor the status of all active switches.
+---
+
+## 🛡️ Threat Models Mitigated
+
+Our architecture specifically addresses extreme adversarial edge cases:
+
+- **Single Provider Subpoena:** The decryption keys are threshold-distributed. No single AWS region or cloud provider can be compelled to hand over the keys.
+- **Bot Suppression:** The detonation trigger is permissionless and incentivized. A state actor cannot shut down a centralized trigger server, because anyone in the world can claim the trigger bounty.
+- **Accidental Detonation:** Features a hardcoded, un-bypassable **20-block L1 Grace Period** buffer to protect against RPC network failures or temporary internet outages preventing a heartbeat.
 
 ---
 
-## ⚙️ How It Works
+## 🚀 Live Deployments (Testnet)
 
-### 1. Setup
-1. **Encrypt & Upload:** The journalist encrypts evidence locally via AES and uploads the ciphertext to Arweave to get a permanent `txID`.
-2. **Key Custody:** The AES key is encrypted using Lit Protocol, locking it behind an Access Control Condition (ACC): *“Only decrypt if `is_triggered` == true on the Stylus contract.”*
-3. **Registration:** The journalist creates a cryptographically random `switchId`, secures the key under that ID, then calls `register_switch(switchId, ...)` on the Stylus contract. The same wallet may repeat this for additional independent switches.
+The project is currently deployed and fully functional on testnet infrastructure:
 
-### 2. Normal Operation
-- The journalist sends a `heartbeat(switchId, nonce)` transaction every $N$ blocks for each switch they want to keep armed.
-- The **Watcher Dashboard** passively reads contract state, showing the switch as "Armed."
+- **Frontend Application:** [https://vault-bomb.vercel.app](https://vault-bomb.vercel.app)
+- **Lit Protocol MPC Node (Mock/Render):** `https://vault-bomb-simulator.onrender.com`
+- **Smart Contract Address:** `0x0c92d14eea513a216ab1559deac8e0ce8fabc3b9` (Arbitrum Sepolia)
 
-### 3. Trigger Event (Detention / Disappearance)
-- Heartbeat window expires.
-- Any wallet (e.g., a searcher bot) calls the public `trigger_release(switchId)` function.
-- The Stylus contract switches state to `TRIGGERED`.
-- The bot triggers the **Lit Action**. Since the ACC is now satisfied, the Lit nodes combine their MPC shares to decrypt the key.
-- The Lit Action fetches the ciphertext, decrypts it, and **multi-publishes** the plaintext to Arweave, Farcaster, and an email list.
-- The Lit Action returns a signed proof of publication.
-- The bot calls `claimBounty(proof)` on the Stylus contract to collect its reward.
+> **Note on Lit Simulator:** Due to the complexity of spinning up custom Datil testnet actions within the hackathon timeframe, the Lit Protocol MPC network is currently simulated via a robust Express/Node.js backend hosted on Render, which perfectly mirrors the ACC and encryption flow.
 
 ---
 
-## 🛡️ Edge Cases & Threat Models Mitigated
+## 💻 Developer Guide & Local Setup
 
-- **Single Provider Failure (EigenCloud/AWS):** By using Lit Protocol's MPC network, no single node or provider holds the whole key, preventing a single subpoena or server crash from killing the switch.
-- **Trigger Suppression (Chainlink Failure):** By making the trigger permissionless and attaching a bounty, we rely on decentralized MEV profit motives rather than a single automation provider.
-- **Fake/Junk Bounties:** The bounty *only* pays out upon cryptographic confirmation that the Lit Action actually published the evidence, preventing bots from draining funds just by flipping the state.
-- **MEV Frontrunning / Fake Heartbeats:** `heartbeat()` strictly requires `msg.sender == registeredWallet`.
-- **Nobody is Watching:** The read-only Watcher Dashboard gives press freedom organizations a centralized place to monitor and catch releases immediately.
+Want to run the stack locally, audit the Rust contract, or contribute? Follow these steps:
 
----
+### 1. Clone & Install
+```bash
+git clone https://github.com/Amrit-mishra07/Vault_bomb.git
+cd Vault_bomb
+```
 
-## 🚀 Hackathon Scope & Demo Implementation
-
-Given the timeline for the Arbitrum Builder Pods, the repository contains a mix of production-grade smart contracts and simulated infrastructure for live demonstration.
-
-### 🟢 Real (Production Grade)
-- **Arbitrum Stylus Contract (`contracts/`):** Fully functional contract deployed to Arbitrum Sepolia. Enforces all trigger logic, heartbeat validation, and the bounty payout mechanism.
-- **Watcher Dashboard (`frontend/src/Watcher.tsx`):** A read-only interface tracking the status of registered switches.
-
-### 🟡 Simulated (Demo Purposes)
-- **Lit Protocol Action (`lit-simulator/`):** Because setting up an end-to-end Lit Action with custom IPFS-deployed JS, ACCs, and threshold decryption takes significant time, we are mocking the Lit Action using a Node.js server. It enforces the ACC check against the contract and mimics the multi-channel publishing to Arweave, Farcaster, and Email (using local files and console logs for the demo).
-- **Arweave Flow:** TxID strings are generated and passed, simulating the permanent storage payload.
-- **Demo Window:** The heartbeat window is configured to a few minutes instead of the recommended 14-30 days to facilitate live presentations.
-
-### 🔴 Future Work (Not Implemented)
-- **Real Lit Protocol Testnet Integration:** Moving from the mocked Lit simulator to the actual Datil testnet.
-- **L1 Force-Inclusion:** Designing the trigger to be callable via the Arbitrum L1 inbox in the event of active sequencer censorship by state actors.
-- **Spam Prevention:** Rate-limiting or requiring a small stake to register a switch to prevent the Watcher dashboard from being flooded with junk data.
-
----
-
-## 💻 Running the Demo Locally
-
-### 1. Start the Frontend & Watcher Dashboard
+### 2. Frontend Development (Vite/React/Tailwind)
 ```bash
 cd frontend
 npm install
+```
+Create a `.env` file in the `frontend/` directory with the following variables:
+```env
+VITE_CONTRACT_ADDRESS=0x0c92d14eea513a216ab1559deac8e0ce8fabc3b9
+```
+Then start the development server:
+```bash
 npm run dev
 ```
 
-### 2. Start the Lit Action Simulator
+### 3. Smart Contract Deployment (Arbitrum Stylus)
+The contract is written in Rust using the `arbitrum/stylus-sdk`.
+```bash
+cd contracts
+cargo stylus check
+```
+To deploy, you must export your private key and point to the Arbitrum Sepolia RPC:
+```bash
+cargo stylus deploy -e <YOUR_PRIVATE_KEY> --rpc https://sepolia-rollup.arbitrum.io/rpc
+```
+
+### 4. Local Lit Simulator (Optional)
+If you wish to test the backend locally instead of using the live Render deployment, you can spin up the mock Lit Simulator node:
 ```bash
 cd lit-simulator
 npm install
 node index.js
 ```
+*(Make sure to update the Lit API endpoints in `frontend/src/services/lit.ts` to point to `http://localhost:3000` if you do this).*
 
+#### Claiming a Bounty (Mock Setup — Developer Note)
+
+> ⚠️ **This section describes mock behaviour only.** In a real Lit Protocol deployment, the bounty proof would be generated automatically by the Lit Action and retrieved via the Lit SDK. The `window.prompt` flow described below **must** be replaced before any production deployment.
+
+When running with the mock Lit Simulator, the bounty-claim flow works as follows:
+
+1. A bounty hunter calls **"Execute Trigger (On-Chain)"** on a vulnerable switch via the Watcher Dashboard.
+2. The `lit-simulator` backend detects the on-chain `Triggered` event and logs a mock proof to its **terminal**:
+   ```
+   💰 BOUNTY PROOF FOR TRIGGERER 💰
+   Triggerer 0x... can now call claim_bounty() with this Lit Proof:
+   0x<hex-string>
+   ```
+3. The bounty hunter clicks the **"💰 Claim Bounty"** button on the dashboard.
+4. A prompt appears asking them to paste the hex proof from the terminal.
+5. The frontend calls `claimBounty(switchId, litProof)` on-chain with the pasted proof.
+
+---
+
+## 👥 Contributing
+We welcome pull requests from developers, cryptographers, and privacy advocates. Please ensure your code passes standard `cargo clippy` linting for Rust and `eslint` for the frontend.
+
+## 📄 License
+This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details. Built for the greater good.
 ### 3. Deploy the Smart Contract
 ```bash
 cd contracts

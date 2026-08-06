@@ -39,7 +39,8 @@ export const encryptKey = async (
   evidenceHash?: string,
   ciphertext?: string
 ) => {
-  const API_URL = import.meta.env.VITE_LIT_SIMULATOR_URL || "https://vault-bomb-simulator.onrender.com";
+  const isDev = import.meta.env.DEV;
+  const API_URL = import.meta.env.VITE_LIT_SIMULATOR_URL || (isDev ? "http://localhost:3000" : "https://vault-bomb-simulator.onrender.com");
   const res = await fetch(`${API_URL}/store-key`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -64,7 +65,8 @@ export const encryptKey = async (
 };
 
 export const decryptKey = async (_ciphertext: string, _dataToEncryptHash: string, _acc: any, switchId?: string) => {
-  const API_URL = import.meta.env.VITE_LIT_SIMULATOR_URL || "https://vault-bomb-simulator.onrender.com";
+  const isDev = import.meta.env.DEV;
+  const API_URL = import.meta.env.VITE_LIT_SIMULATOR_URL || (isDev ? "http://localhost:3000" : "https://vault-bomb-simulator.onrender.com");
   const res = await fetch(`${API_URL}/get-key/${switchId}`);
   if (!res.ok) {
     throw new Error("Failed to retrieve key from Lit Simulator. Is it triggered on-chain?");

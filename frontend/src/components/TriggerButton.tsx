@@ -1,21 +1,10 @@
 import { useState } from 'react';
 import { ethers } from 'ethers';
-import { getProvider, getContract } from '../contracts/VaultBomb';
+import { getProvider, getContract, getRobustGasOverrides } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
+import { decodeRevertReason } from '../contracts/decodeRevertReason';
+import { simplifyError } from '../utils/errors';
 
-// Decode Stylus raw revert bytes into a readable string
-function decodeRevertReason(error: any): string {
-  // Stylus contracts return raw bytes (not ABI-encoded Error(string))
-  // Check for the data field which contains the hex-encoded ASCII error
-  const data = error?.data ?? error?.error?.data ?? error?.info?.error?.data;
-  if (typeof data === 'string' && data.startsWith('0x') && data.length > 2) {
-    try {
-      const bytes = ethers.getBytes(data);
-      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      if (decoded && /^[\x20-\x7E]+$/.test(decoded)) return decoded;
-    } catch { /* not valid UTF-8 */ }
-  }
-  return '';
-}
 
 type TriggerButtonProps = {
   switchId: string;
@@ -23,16 +12,25 @@ type TriggerButtonProps = {
 };
 
 export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [loading, setLoading] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
 
   const handleTrigger = async () => {
     setLoading(true);
     try {
       const provider = getProvider();
+      if (provider instanceof ethers.BrowserProvider) {
+        await import('../contracts/VaultBomb').then(m => m.ensureCorrectNetwork(provider));
+      }
       const signer = await provider.getSigner();
       const contract = await getContract(signer);
       
       // Pre-flight check: verify the contract will accept this trigger
+      if (isRateLimited) setRateLimitPending(true);
+      await acquireRateLimit();
+      setRateLimitPending(false);
+
       try {
         await contract.triggerRelease.staticCall(switchId);
       } catch (preflight: any) {
@@ -49,11 +47,13 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
         return;
       }
 
-      const feeData = await provider.getFeeData();
-      const overrides: any = {};
-      if (feeData.maxFeePerGas) overrides.maxFeePerGas = (feeData.maxFeePerGas * 15n) / 10n;
-      if (feeData.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * 15n) / 10n;
-      const tx = await contract.triggerRelease(switchId, overrides);
+      const overrides = await getRobustGasOverrides(provider);
+      
+      const estimatedGas = await contract.triggerRelease.estimateGas(switchId);
+      const tx = await contract.triggerRelease(switchId, {
+        ...overrides,
+        gasLimit: (estimatedGas * 120n) / 100n
+      });
       const receipt = await tx.wait();
 
       // Extract the arweaveTxId from the Triggered event in the receipt
@@ -73,25 +73,43 @@ export function TriggerButton({ switchId, onTriggered }: TriggerButtonProps) {
 
       // Notify parent immediately so dashboard updates without waiting for event polling
       onTriggered?.(switchId, arweaveTxId);
+      
+      try {
+        const API_URL = import.meta.env.VITE_LIT_SIMULATOR_URL || "http://localhost:3000";
+        await fetch(`${API_URL}/simulate-trigger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            switchId,
+            journalist: "Unknown",
+            triggerer: await signer.getAddress(),
+            arweaveTxId: arweaveTxId || ""
+          })
+        });
+      } catch (e) {
+        console.error("Failed to notify Lit Simulator:", e);
+      }
 
       alert("Trigger executed on-chain! Lit Protocol will now allow decryption.");
     } catch (e: any) {
       console.error(e);
+      reportError(e);
       const reason = decodeRevertReason(e);
       if (reason) {
         alert(`Trigger failed: ${reason}`);
       } else {
-        alert("Failed to trigger. Please check the console for details.");
+        alert(`Failed to trigger: ${simplifyError(e)}`);
       }
     } finally {
       setLoading(false);
+      setRateLimitPending(false);
     }
   };
 
   return (
     <div>
-      <button onClick={handleTrigger} disabled={loading} style={{ background: '#ff5252', padding: '5px 10px', fontSize: '0.8rem' }}>
-        {loading ? 'Triggering...' : 'Execute Trigger (On-Chain)'}
+      <button onClick={handleTrigger} disabled={loading || rateLimitPending} style={{ background: '#ff5252', padding: '5px 10px', fontSize: '0.8rem' }}>
+        {rateLimitPending ? 'Hit Rate Limit…' : loading ? 'Triggering...' : 'Execute Trigger (On-Chain)'}
       </button>
     </div>
   );

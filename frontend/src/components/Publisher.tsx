@@ -1,28 +1,84 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { generateAESKey, encryptText, exportKey } from '../services/crypto';
 import { uploadToIrys } from '../services/irys';
 import { buildACC, encryptKey } from '../services/lit';
 import { ethers } from 'ethers';
 import { registerSwitch, getProvider } from '../contracts/VaultBomb';
+import { useGlobalRateLimit } from '../contexts/GlobalRateLimitContext';
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
 
+import { simplifyError } from '../utils/errors';
+
+type SavedSwitch = {
+  id: string;
+  timestamp: number;
+};
+
+function SavedSwitchList({ switches }: { switches: SavedSwitch[] }) {
+  if (switches.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: '2rem' }}>
+      <h3>Your Armed Switches</h3>
+      <ul style={{ listStyle: 'none', padding: 0 }}>
+        {switches.map((sw) => (
+          <li key={sw.id} style={{ marginBottom: '1rem', padding: '1rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontFamily: 'monospace', wordBreak: 'break-all', color: '#00e676' }}>{sw.id}</span>
+              <button 
+                onClick={() => navigator.clipboard.writeText(sw.id)}
+                style={{ marginLeft: '1rem', background: '#333', border: 'none', color: '#fff', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Copy
+              </button>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: '#8a8a9d', marginTop: '0.5rem' }}>
+              Created: {new Date(sw.timestamp).toLocaleString()}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Publisher() {
+  const { acquireRateLimit, reportError, isRateLimited } = useGlobalRateLimit();
   const [secret, setSecret] = useState('');
   const [bounty, setBounty] = useState('0.000001');
   const [heartbeatBlocks, setHeartbeatBlocks] = useState('7200');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [isRegistered, setIsRegistered] = useState(false);
+  const [rateLimitPending, setRateLimitPending] = useState(false);
+  const [savedSwitches, setSavedSwitches] = useState<SavedSwitch[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('vaultBombSwitches');
+      if (stored) {
+        setSavedSwitches(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load saved switches", e);
+    }
+  }, []);
 
   const handleArmBomb = async () => {
     setStatus('Generating encryption keys...');
     setError('');
-    
+
     let currentStep = 'Initialization';
     try {
       if (!window.ethereum) throw new Error("Please install MetaMask!");
       
+      // Acquire a global rate-limit slot before hitting the chain / Lit Simulator.
+      // If the budget is exhausted this will block asynchronously for up to 60s.
+      if (isRateLimited) setRateLimitPending(true);
+      await acquireRateLimit();
+      setRateLimitPending(false);
+
       currentStep = 'Connecting MetaMask';
       await window.ethereum.request({ method: 'eth_requestAccounts' });
 
@@ -95,9 +151,22 @@ export function Publisher() {
       setStatus('Vault Bomb Armed successfully!');
       setIsRegistered(true);
       setSecret('');
+      
+      const newSwitch: SavedSwitch = { id: switchId, timestamp: Date.now() };
+      const updated = [newSwitch, ...savedSwitches];
+      setSavedSwitches(updated);
+      try {
+        localStorage.setItem('vaultBombSwitches', JSON.stringify(updated));
+      } catch (e) {
+        console.error("Failed to save switch to localStorage", e);
+      }
     } catch (err: any) {
-      console.error(err);
-      setError(`[Failed at: ${currentStep}] ${err.stack || err.message}`);
+      // Log the complete error object — full stack trace visible in DevTools (F12 → Console).
+      console.error(`[Vault Bomb] Arm failed at step "${currentStep}":`, err);
+
+      reportError(err);
+      setRateLimitPending(false);
+      setError(simplifyError(err));
       setStatus('');
     }
   };
@@ -139,21 +208,29 @@ export function Publisher() {
       </div>
       
       {isRegistered ? (
-        <div style={{ color: 'var(--accent)', marginTop: '1rem', fontWeight: 'bold', textAlign: 'center' }}>
-          Vault Bomb is Armed! The secret will be released if you fail to check in.
+        <div style={{ color: 'var(--success)', marginTop: '1rem', fontWeight: 'bold', textAlign: 'center', padding: '0.75rem', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px' }}>
+          ✅ Vault Bomb is Armed! The secret will be released if you fail to check in.
         </div>
       ) : (
-        <button 
-          onClick={handleArmBomb} 
+        <button
+          onClick={handleArmBomb}
           className="primary-btn"
           style={{ width: '100%', marginTop: '1rem' }}
-          disabled={!!status}
+          disabled={!!status || rateLimitPending}
         >
-          {status ? status : 'Arm Vault Bomb'}
+          {rateLimitPending ? 'Hit Rate Limit…' : status ? status : 'Arm Vault Bomb'}
         </button>
       )}
 
-      {error && <div style={{ color: 'var(--accent)', marginTop: '1rem', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>Error: {error}</div>}
+      {error && (
+        <div role="alert" style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.35)', borderRadius: '8px', fontSize: '0.9rem', lineHeight: 1.6 }}>
+          <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text)' }}>
+            {error}
+          </p>
+        </div>
+      )}
+
+      <SavedSwitchList switches={savedSwitches} />
     </div>
   );
 }
