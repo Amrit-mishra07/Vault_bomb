@@ -10,7 +10,8 @@ const DEFAULT_SCAN_BLOCKS = 100_000;
 
 export default function Dashboard({ wallet }: { wallet: string | null }) {
   const { rpcCall, isRateLimited } = useRpcCall();
-  const [switches, setSwitches] = useState<SwitchInfo[]>([]);
+  const [mySwitches, setMySwitches] = useState<SwitchInfo[]>([]);
+  const [allSwitches, setAllSwitches] = useState<SwitchInfo[]>([]);
   const [watcherOffset, setWatcherOffset] = useState(0);
   const [watcherHasMore, setWatcherHasMore] = useState(false);
   const [currentBlock, setCurrentBlock] = useState(0n);
@@ -62,7 +63,9 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
     };
   };
 
-  const fetchSwitches = async (offset = 0, append = false) => {
+  const activeSwitches = filter === 'my' ? mySwitches : allSwitches;
+
+  const fetchSwitches = async (offset = 0, append = false, currentFilter = filter) => {
     if (!CONTRACT_CONFIGURED) {
       setIsLoading(false);
       return;
@@ -80,7 +83,7 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
 
       let targetIds: string[] = [];
 
-      if (filter === 'my' && wallet) {
+      if (currentFilter === 'my' && wallet) {
         // Option 1: Scan for events specifically by this owner
         const myFilter = contract.filters.SwitchRegistered(null, wallet);
         const fromBlock = Number(l2BlockNow) > DEFAULT_SCAN_BLOCKS ? Number(l2BlockNow) - DEFAULT_SCAN_BLOCKS : 0;
@@ -119,7 +122,13 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
         }
       })).filter(Boolean) as SwitchInfo[];
       
-      setSwitches(current => append ? [...current, ...loaded] : loaded);
+      const updateState = (current: SwitchInfo[]) => append ? [...current, ...loaded] : loaded;
+      if (currentFilter === 'my') {
+        setMySwitches(updateState);
+      } else {
+        setAllSwitches(updateState);
+      }
+      
       setWatcherOffset(offset + pageIds.length);
       setWatcherHasMore(offset + pageIds.length < targetIds.length);
     } catch (error) {
@@ -130,11 +139,13 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
   };
 
   const handleSwitchTriggered = useCallback(async (switchId: string, arweaveTxId?: string) => {
-    setSwitches(current => current.map(sw => 
+    const updateFn = (current: SwitchInfo[]) => current.map(sw => 
       sw.id === switchId 
         ? { ...sw, status: 'TRIGGERED' as SwitchStatus, irysTxId: arweaveTxId || sw.irysTxId } 
         : sw
-    ));
+    );
+    setMySwitches(updateFn);
+    setAllSwitches(updateFn);
   }, []);
 
   const handleHeartbeat = useCallback((_switchId: string) => {
@@ -142,18 +153,19 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
   }, [filter, wallet]);
 
   const handleBountyClaimed = useCallback((switchId: string) => {
-    setSwitches(current => current.map(sw =>
+    const updateFn = (current: SwitchInfo[]) => current.map(sw =>
       sw.id === switchId ? { ...sw, bountyClaimed: true } : sw
-    ));
+    );
+    setMySwitches(updateFn);
+    setAllSwitches(updateFn);
   }, []);
 
   useEffect(() => {
-    setSwitches([]);
     setWatcherOffset(0);
-    fetchSwitches(0, false);
+    fetchSwitches(0, false, filter);
     
     const pollInterval = CONTRACT_CONFIGURED
-      ? setInterval(() => { fetchSwitches(0, false); }, 30_000)
+      ? setInterval(() => { fetchSwitches(0, false, filter); }, 30_000)
       : undefined;
 
     return () => { if (pollInterval) clearInterval(pollInterval); };
@@ -196,13 +208,13 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
         <div className="p-6 border border-red-500/30 bg-red-950/20 text-red-400 font-mono text-sm">
           Set VITE_CONTRACT_ADDRESS to a deployed contract address.
         </div>
-      ) : switches.length === 0 && !isLoading ? (
+      ) : activeSwitches.length === 0 && !isLoading ? (
         <div className="p-12 border border-white/10 text-center text-gray-500 font-mono text-sm">
           {filter === 'my' && !wallet ? "Connect your wallet to see your switches." : "No switches found."}
         </div>
       ) : (
         <div className="space-y-4">
-          {switches.map(sw => (
+          {activeSwitches.map(sw => (
             <SwitchCard 
               key={sw.id} 
               sw={sw} 
