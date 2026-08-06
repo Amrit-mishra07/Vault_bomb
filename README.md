@@ -151,3 +151,4 @@ node index.js
 cd contracts
 ./deploy.sh
 ```
+ 
