@@ -252,7 +252,7 @@ impl VaultBomb {
     pub fn get_switch_info(
         &self,
         switch_id: B256,
-    ) -> Result<(Address, bool, bool, U256, U256, U256, U256, bool, U256), Vec<u8>> {
+    ) -> Result<(Address, bool, bool, U256, U256, U256, U256, bool, U256, Address), Vec<u8>> {
         let sw = self.switches.getter(switch_id);
         if !sw.is_active.get() {
             return Err("Switch not active".as_bytes().to_vec());
@@ -267,6 +267,7 @@ impl VaultBomb {
             sw.bounty_amount.get(),
             sw.bounty_claimed.get(),
             sw.last_nonce.get(),
+            sw.triggerer_wallet.get(),
         ))
     }
 }

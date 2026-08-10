@@ -16,7 +16,8 @@ export const buildACC = (contractAddress: string, switchId: string) => {
           { internalType: "uint256", name: "last_heartbeat_block", type: "uint256" },
           { internalType: "uint256", name: "bounty_amount", type: "uint256" },
           { internalType: "bool", name: "bounty_claimed", type: "bool" },
-          { internalType: "uint256", name: "last_nonce", type: "uint256" }
+          { internalType: "uint256", name: "last_nonce", type: "uint256" },
+          { internalType: "address", name: "triggerer", type: "address" }
         ],
         stateMutability: "view",
         type: "function"

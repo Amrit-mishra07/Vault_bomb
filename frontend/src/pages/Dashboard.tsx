@@ -58,6 +58,7 @@ export default function Dashboard({ wallet }: { wallet: string | null }) {
       bounty: ethers.formatEther(info[6]),
       bountyClaimed: info[7],
       lastNonce: Number(info[8]),
+      triggerer: info[9],
       irysTxId,
       remainingBlocks
     };

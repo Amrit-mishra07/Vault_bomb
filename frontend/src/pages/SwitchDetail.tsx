@@ -17,6 +17,7 @@ type SwitchDetailInfo = {
   bounty: string;
   bountyClaimed: boolean;
   irysTxId?: string;
+  triggerer: string;
 };
 
 export default function SwitchDetail({ wallet }: { wallet: string | null }) {
@@ -70,7 +71,8 @@ export default function SwitchDetail({ wallet }: { wallet: string | null }) {
         status,
         bounty: ethers.formatEther(info[6]),
         bountyClaimed: info[7],
-        irysTxId
+        irysTxId,
+        triggerer: info[9]
       });
     } catch (e) {
       console.error(e);
@@ -195,7 +197,7 @@ export default function SwitchDetail({ wallet }: { wallet: string | null }) {
               <TriggerButton switchId={sw.id} onTriggered={() => fetchSwitch()} />
             )}
             
-            {sw.status === 'TRIGGERED' && !sw.bountyClaimed && (
+            {sw.status === 'TRIGGERED' && !sw.bountyClaimed && wallet?.toLowerCase() === sw.triggerer?.toLowerCase() && (
               <ClaimBountyButton switchId={sw.id} onClaimed={() => fetchSwitch()} />
             )}
           </div>

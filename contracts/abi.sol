@@ -23,5 +23,5 @@ interface IVaultBomb {
 
     function checkUpkeep(bytes calldata check_data) external view returns (bool, bytes memory);
 
-    function getSwitchInfo(bytes32 switch_id) external view returns (address, bool, bool, uint256, uint256, uint256, uint256, bool, uint256);
+    function getSwitchInfo(bytes32 switch_id) external view returns (address, bool, bool, uint256, uint256, uint256, uint256, bool, uint256, address);
 }
