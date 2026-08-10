@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { generateAESKey, encryptData, exportKey } from '../services/crypto';
+import { generateAESKey, encryptData, exportKey, bufferToBase64 } from '../services/crypto';
 import { uploadToIrys } from '../services/irys';
 import { buildACC, encryptKey } from '../services/lit';
 import { ethers } from 'ethers';
@@ -77,7 +77,7 @@ export default function Register({ wallet }: { wallet: string | null }) {
       const combined = new Uint8Array(12 + ciphertextBuffer.byteLength);
       combined.set(ivBuffer, 0);
       combined.set(ciphertextBuffer, 12);
-      const fullCiphertext = btoa(String.fromCharCode(...combined));
+      const fullCiphertext = await bufferToBase64(combined);
       
       setActiveStep(1); // Start Arweave
 
