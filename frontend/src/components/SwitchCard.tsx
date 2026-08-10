@@ -15,6 +15,7 @@ export type SwitchInfo = {
   lastNonce: number;
   irysTxId?: string;
   remainingBlocks?: number;
+  triggerer: string;
 };
 
 type SwitchCardProps = {
@@ -88,7 +89,7 @@ export function SwitchCard({ sw, wallet, onTriggered, onHeartbeat, onClaimed }: 
           <HeartbeatButton switchId={sw.id} onHeartbeat={onHeartbeat} />
         )}
 
-        {(sw.status === 'TRIGGERED' || sw.status === 'PUBLISHED') && !sw.bountyClaimed && (
+        {(sw.status === 'TRIGGERED' || sw.status === 'PUBLISHED') && !sw.bountyClaimed && wallet?.toLowerCase() === sw.triggerer?.toLowerCase() && (
           <ClaimBountyButton switchId={sw.id} onClaimed={onClaimed} />
         )}
         

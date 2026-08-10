@@ -1,14 +1,15 @@
 import { ethers } from "ethers";
 
 const ABI = [
-  "function getSwitchInfo(bytes32 switch_id) external view returns (address owner, bool is_active, bool is_triggered, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, uint256 last_heartbeat_block, uint256 bounty_amount, bool bounty_claimed, uint256 last_nonce)",
+  "function getSwitchInfo(bytes32 switch_id) external view returns (address owner, bool is_active, bool is_triggered, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, uint256 last_heartbeat_block, uint256 bounty_amount, bool bounty_claimed, uint256 last_nonce, address triggerer)",
   "function registerSwitch(bytes32 switch_id, uint256 heartbeat_window_blocks, uint256 grace_period_blocks, string arweave_tx_id, bytes32 evidence_hash, address duress_wallet, address backup_wallet) external payable",
   "function heartbeat(bytes32 switch_id, uint256 nonce) external",
   "function triggerRelease(bytes32 switch_id) external",
   "function claimBounty(bytes32 switch_id, bytes lit_proof) external",
   "event SwitchRegistered(bytes32 indexed switchId, address indexed journalist, uint256 heartbeatWindowBlocks, uint256 bountyAmount)",
   "event Triggered(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, string arweaveTxId)",
-  "event PlaintextPublished(bytes32 indexed switchId, string arweaveTxId)"
+  "event PlaintextPublished(bytes32 indexed switchId, string arweaveTxId)",
+  "event BountyClaimed(bytes32 indexed switchId, address indexed journalist, address indexed triggerer, uint256 amount)"
 ];
 
 export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS ?? '';
@@ -23,6 +24,7 @@ export interface SwitchInfoResult {
   bountyAmount: bigint;
   bountyClaimed: boolean;
   lastNonce: bigint;
+  triggerer: string;
 }
 
 export const getProvider = () => {
