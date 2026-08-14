@@ -120,6 +120,8 @@ flowchart TB
     Bot -- "Claim Bounty + Proof" --> Contract
 ```
 
+<img src="./deadmans_switch_architecture.png" width="800" alt="Architecture Diagram" />
+
 ### Trust boundaries:
 - **On-chain:** Vault state, timing logic, trigger condition, and bounty (Arbitrum).
 - **Off-chain, Permanent:** Encrypted evidence (Irys/Arweave).
@@ -477,11 +479,6 @@ The output in `dist/` can be deployed to Vercel, Netlify, or IPFS.
 <img src="./screenshots/4.png" width="800" alt="App View 4" />
 <br/>
 <br/>
-
-**Architecture Reference:**
-<br/>
-<img src="./deadmans_switch_architecture.png" width="800" alt="Architecture Diagram" />
-
 </details>
 
 ---
